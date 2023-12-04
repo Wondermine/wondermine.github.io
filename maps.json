@@ -27,7 +27,7 @@
       "cryostine":{
          "-710":"red",
          "0-71":"green",
-         "071":"yellow",
+         "071":"orange",
          "710":"blue"
       },
       "clockworks":{
@@ -98,13 +98,14 @@
       },
       "utopia":{
          "-650":"red",
-         "-362":"yellow",
-         "590":"blue"
+         "-590":"green",
+         "590":"blue",
+         "-362": "orange"
       },
       "templar":{
          "-55-203":"red",
          "9-267":"green",
-         "9-139":"yellow",
+         "9-139":"orange",
          "73-203":"blue"
       }
    }
