@@ -1,6 +1,6 @@
 {
    "quad":{
-      "arcadium":{
+      "arcadiu":{
          "-650":"red",
          "0-65":"green",
          "065":"yellow",
@@ -12,31 +12,31 @@
          "157":"yellow",
          "580":"blue"
       },
-      "bone_dry":{
+      "bone_dr":{
          "-8147":"red",
          "81-47":"green",
          "8147":"yellow",
          "-81-47":"blue"
       },
-      "bon_vinant":{
+      "bon_viv":{
          "-57-65":"red",
          "5765":"green",
          "-5765":"yellow",
          "57-65":"blue"
       },
-      "cryostine":{
+      "cryosti":{
          "-710":"red",
          "0-71":"green",
          "071":"orange",
          "710":"blue"
       },
-      "clockworks":{
+      "clockwo":{
          "-630":"red",
          "0-63":"green",
          "063":"yellow",
          "630":"blue"
       },
-      "eastwood":{
+      "eastwoo":{
          "-529":"red",
          "4-47":"green",
          "465":"yellow",
@@ -54,19 +54,19 @@
          "-6562":"yellow",
          "65-62":"blue"
       },
-      "hellscape":{
+      "hellsca":{
          "-670":"red",
          "0-67":"green",
          "067":"yellow",
          "670":"blue"
       },
-      "interlude":{
+      "interlu":{
          "-43-43":"red",
          "4343":"green",
          "-4343":"yellow",
          "43-43":"blue"
       },
-      "invasion":{
+      "invasio":{
          "-43-41":"red",
          "4140":"green",
          "-4340":"yellow",
@@ -78,19 +78,19 @@
          "4242":"yellow",
          "43-41":"blue"
       },
-      "regarden":{
+      "regarde":{
          "-1080":"red",
          "0-108":"green",
          "0108":"yellow",
          "1080":"blue"
       },
-      "rockbottom":{
+      "rockbot":{
          "-910":"red",
          "0-91":"green",
          "091":"yellow",
          "920":"blue"
       },
-      "ships_ahoy":{
+      "ships_ah":{
          "-48-90":"red",
          "4890":"green",
          "-4890":"yellow",
