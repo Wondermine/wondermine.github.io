@@ -1,112 +1,280 @@
 {
-   "quad":{
-      "arcadiu":{
-         "-650":"red",
-         "0-65":"green",
-         "065":"yellow",
-         "659":"blue"
-      },
-      "avenue":{
-         "-650":"red",
-         "1-65":"green",
-         "157":"yellow",
-         "580":"blue"
-      },
-      "bone_dr":{
-         "-8147":"red",
-         "81-47":"green",
-         "8147":"yellow",
-         "-81-47":"blue"
-      },
-      "bon_viv":{
-         "-57-65":"red",
-         "5765":"green",
-         "-5765":"yellow",
-         "57-65":"blue"
-      },
-      "cryosti":{
-         "-710":"red",
-         "0-71":"green",
-         "071":"orange",
-         "710":"blue"
-      },
-      "clockwo":{
-         "-630":"red",
-         "0-63":"green",
-         "063":"yellow",
-         "630":"blue"
-      },
-      "eastwoo":{
-         "-529":"red",
-         "4-47":"green",
-         "465":"yellow",
-         "609":"blue"
-      },
-      "endmost":{
-         "-920":"red",
-         "0-92":"green",
-         "092":"yellow",
-         "920":"blue"
-      },
-      "heist":{
-         "-65-62":"red",
-         "6562":"green",
-         "-6562":"yellow",
-         "65-62":"blue"
-      },
-      "hellsca":{
-         "-670":"red",
-         "0-67":"green",
-         "067":"yellow",
-         "670":"blue"
-      },
-      "interlu":{
-         "-43-43":"red",
-         "4343":"green",
-         "-4343":"yellow",
-         "43-43":"blue"
-      },
-      "invasio":{
-         "-43-41":"red",
-         "4140":"green",
-         "-4340":"yellow",
-         "41-41":"blue"
-      },
-      "lectus":{
-         "-42-42":"red",
-         "-4341":"green",
-         "4242":"yellow",
-         "43-41":"blue"
-      },
-      "regarde":{
-         "-1080":"red",
-         "0-108":"green",
-         "0108":"yellow",
-         "1080":"blue"
-      },
-      "rockbot":{
-         "-910":"red",
-         "0-91":"green",
-         "091":"yellow",
-         "920":"blue"
-      },
-      "ships_ah":{
-         "-48-90":"red",
-         "4890":"green",
-         "-4890":"yellow",
-         "48-90":"blue"
-      },
-      "utopia":{
-         "-650":"red",
-         "-590":"green",
-         "590":"blue",
-         "-362": "orange"
-      },
-      "templar":{
-         "-55-203":"red",
-         "9-267":"green",
-         "9-139":"orange",
-         "73-203":"blue"
-      }
+   "arcadiu":{
+      "-650":"red",
+      "0-65":"green",
+      "065":"yellow",
+      "659":"blue"
+   },
+   "avenue":{
+      "-650":"red",
+      "1-65":"green",
+      "157":"yellow",
+      "580":"blue"
+   },
+   "bone_dr":{
+      "-8147":"red",
+      "81-47":"green",
+      "8147":"yellow",
+      "-81-47":"blue"
+   },
+   "bon_viv":{
+      "-57-65":"red",
+      "5765":"green",
+      "-5765":"yellow",
+      "57-65":"blue"
+   },
+   "cryosti":{
+      "-710":"red",
+      "0-71":"green",
+      "071":"orange",
+      "710":"blue"
+   },
+   "clockwo":{
+      "-630":"red",
+      "0-63":"green",
+      "063":"yellow",
+      "630":"blue"
+   },
+   "eastwoo":{
+      "-529":"red",
+      "4-47":"green",
+      "465":"yellow",
+      "609":"blue"
+   },
+   "endmost":{
+      "-920":"red",
+      "0-92":"green",
+      "092":"yellow",
+      "920":"blue"
+   },
+   "heist":{
+      "-65-62":"red",
+      "6562":"green",
+      "-6562":"yellow",
+      "65-62":"blue"
+   },
+   "hellsca":{
+      "-670":"red",
+      "0-67":"green",
+      "067":"yellow",
+      "670":"blue"
+   },
+   "interlu":{
+      "-43-43":"red",
+      "4343":"green",
+      "-4343":"yellow",
+      "43-43":"blue"
+   },
+   "invasio":{
+      "-43-41":"red",
+      "4140":"green",
+      "-4340":"yellow",
+      "41-41":"blue"
+   },
+   "lectus":{
+      "-42-42":"red",
+      "-4341":"green",
+      "4242":"yellow",
+      "43-41":"blue"
+   },
+   "regarde":{
+      "-1080":"red",
+      "0-108":"green",
+      "0108":"yellow",
+      "1080":"blue"
+   },
+   "rockbot":{
+      "-910":"red",
+      "0-91":"green",
+      "091":"yellow",
+      "920":"blue"
+   },
+   "ships_ah":{
+      "-48-90":"red",
+      "4890":"green",
+      "-4890":"yellow",
+      "48-90":"blue"
+   },
+   "utopia":{
+      "-650":"red",
+      "-590":"green",
+      "590":"blue",
+      "-362": "orange"
+   },
+   "templar":{
+      "-55-203":"red",
+      "9-267":"green",
+      "9-139":"orange",
+      "73-203":"blue"
+   },
+   "cherno": {
+      "-4078": "white",
+      "-40-78": "red",
+      "4078": "aqua",
+      "-7840": "pink",
+      "7840": "yellow",
+      "78-40": "green",
+      "40-78": "blue",
+      "-78-40": "gray"
+   },
+   "attrit": {
+      "-27-72": "red",
+      "27-72": "blue",
+      "7227": "yellow",
+      "2772": "aqua",
+      "-2772": "white",
+      "-7227": "pink",
+      "-72-27": "gray",
+      "72027": "green"
+   },
+   "fortress": {
+      "-29-78": "red",
+      "37-78": "blue",
+      "86-29": "green",
+      "8637": "yellow",
+      "3786": "aqua",
+      "-2986": "white",
+      "-7837": "pink",
+      "-7829": "gray"
+   },
+   "gas_station": {
+      "-30-66": "red",
+      "30-66": "blue",
+      "66-30": "green",
+      "6630": "yellow",
+      "3066": "aqua",
+      "-6630": "pink",
+      "-66-30": "gray",
+      "-3066": "orange"
+   },
+   "lighthouse": {
+      "-26-76": "red",
+      "26-76": "blue",
+      "76-26": "green",
+      "7626": "yellow",
+      "2676": "aqua",
+      "-2676": "white",
+      "-7626": "pink",
+      "-2626": "gray"
+   },
+   "macho": {
+      "-37-83": "red",
+      "37-83": "blue",
+      "83-33": "green",
+      "8333": "yellow",
+      "3783": "aqua",
+      "-3783": "white",
+      "-8333": "pink",
+      "-83-33": "gray"
+   },
+   "meal_morale": {
+      "-41-86": "red",
+      "41-86": "blue",
+      "86-41": "green",
+      "8641": "yellow",
+      "4186": "aqua",
+      "-4186": "white",
+      "-8641": "pink",
+      "-86-41": "gray"
+   },
+   "olympus": {
+      "-31-77": "red",
+      "31-77": "blue",
+      "77-31": "green",
+      "7731": "yellow",
+      "3177": "aqua",
+      "-3177": "white",
+      "-7731": "pink",
+      "-77-31": "gray"
+   },
+   "planet_ea": {
+      "-38-100": "red",
+      "39-99": "blue",
+      "100-38": "green",
+      "9939": "yellow",
+      "38100": "aqua",
+      "-3999": "white",
+      "-10038": "pink",
+      "-9929": "gray"
+   },
+   "reckoning": {
+      "-31-65": "red",
+      "31-65": "blue",
+      "65-31": "green",
+      "6531": "yellow",
+      "3165": "aqua",
+      "-3165": "white",
+      "-6531": "pink",
+      "-65-31": "gray"
+   },
+   "rooftop": {
+      "-34-81": "red",
+      "34-81": "blue",
+      "81-34": "green",
+      "8134": "yellow",
+      "3481": "aqua",
+      "-3481": "white",
+      "-8134": "pink",
+      "-81-34": "gray"
+   },
+   "ruins": {
+      "-22-55": "red",
+      "44-55": "blue",
+      "7623": "green",
+      "7643": "yellow",
+      "4475": "aqua",
+      "-2275": "white",
+      "-5443": "pink",
+      "-5423": "gray"
+   },
+   "skycrypt": {
+      "-83-53": "red",
+      "-31-53": "blue",
+      "2952": "green",
+      "81-53": "yellow",
+      "-3153": "aqua",
+      "-8353": "white",
+      "8153": "pink",
+      "2953": "gray"
+   },
+   "speedway": {
+      "-30-70": "red",
+      "34-70": "blue",
+      "74-34": "green",
+      "7434": "yellow",
+      "3474": "aqua",
+      "-3074": "white",
+      "-7034": "pink",
+      "-70-30": "gray"
+   },
+   "stonekeep": {
+      "-131540": "red",
+      "-71540": "blue",
+      "-34577": "green",
+      "-34637": "yellow",
+      "-71674": "aqua",
+      "-131674": "white",
+      "-168637": "pink",
+      "-168577": "gray"
+   },
+   "tiki_trouble": {
+      "-34-82": "red",
+      "34-82": "blue",
+      "82-34": "green",
+      "8234": "yellow",
+      "3482": "aqua",
+      "-3482": "white",
+      "-8234": "pink",
+      "-82-34": "gray"
+   },
+   "twi_temple": {
+      "-33-88": "red",
+      "33-88": "blue",
+      "88-33": "green",
+      "8833": "yellow",
+      "3388": "aqua",
+      "-3388": "white",
+      "-8833": "pink",
+      "-88-33": "gray"
    }
 }
