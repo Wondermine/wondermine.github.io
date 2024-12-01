@@ -1,0 +1,14 @@
+{
+  "events": [
+    {"diamond_upgrade_1": 240},
+    {"emerald_upgrade_1": 480},
+    {"diamond_upgrade_2": 720},
+    {"emerald_upgrade_2": 960},
+    {"beds_destroyed": 1020},
+    {"border_moving": 1260},
+    {"player_damage": 1645},
+    {"player_damage_stop": 1675},
+    {"game_end": 1710}
+  ],
+  "last_update": "12/01/2024"
+}
