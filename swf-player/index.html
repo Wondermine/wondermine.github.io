@@ -41,6 +41,7 @@ button{background:none;border:0;cursor:pointer}
 .big:active{filter:brightness(.9)}
 #urlForm{display:flex;gap:8px;max-width:420px;margin:14px auto}
 #urlForm input{flex:1;min-width:0;padding:11px 12px;font-size:16px;border-radius:10px;border:1px solid var(--line);background:var(--panel);-webkit-user-select:text;user-select:text}
+#baseIn{display:block;width:100%;max-width:420px;margin:0 auto;padding:11px 12px;font-size:16px;border-radius:10px;border:1px solid var(--line);background:var(--panel);-webkit-user-select:text;user-select:text}
 #urlForm button,.ghost{padding:0 16px;border-radius:10px;background:var(--panel);border:1px solid var(--line)}
 .empty h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:26px 0 8px}
 #recent{list-style:none;margin:0 auto;padding:0;max-width:420px;text-align:left}
@@ -141,6 +142,8 @@ body.immersive .bar{display:none}
       <input id="urlIn" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="…or paste a URL (needs CORS)">
       <button type="submit">Go</button>
     </form>
+    <input id="baseIn" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Optional: web folder the game loads its extra files from">
+    <p class="fine" style="margin-top:6px!important">Only for a single SWF whose extra files (data/, sound/ …) are hosted on a website: paste that folder's URL here <b>before</b> tapping Open a file. Leave it empty for everything else.</p>
     <h2 id="recentH" hidden>Recent</h2>
     <ul id="recent"></ul>
     <p class="fine">Files stay on your device. Nothing is uploaded.<br>Tip: add <code>?swf=games/foo.swf</code> to the page URL to auto-load a file hosted next to this page.<br><span id="verHome"></span></p>
@@ -324,7 +327,7 @@ const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
 
 /* ================= app ================= */
 const $ = id => document.getElementById(id);
-const VERSION = '1.6.0';          // bump on every change
+const VERSION = '1.7.0';          // bump on every change
 const BUILD_DATE = '2026-11-16';
 let ruffleVersion = '';
 function showVersion() {
@@ -420,6 +423,7 @@ async function startPlayer() {
       autoplay: 'on', unmuteOverlay: 'visible', contextMenu: 'off', letterbox: 'on',
       scale: S.scale, quality: S.quality, allowFullscreen: true
     };
+    if (current.base) cfg.base = current.base;
     if (current.kind === 'url') {
       await p.load(Object.assign({ url: current.url }, cfg));
     } else {
@@ -512,6 +516,15 @@ async function openBundle(entries, label) {
     if (!chosen) return;
     main = swfs.find(e => e.path === chosen);
   }
+  const base = curBase();
+  if (base && entries.length === 1) {
+    // The game's extra files live on a website: hand Ruffle that folder as its base URL.
+    busy('Reading…');
+    try { await caches.delete('swf-vfs'); } catch (_) {}
+    bundle = null; missing.clear(); updateMissing();
+    current = { kind: 'data', name: main.path, bytes: new Uint8Array(await new Response(await main.load()).arrayBuffer()), base };
+    return startPlayer();
+  }
   busy('Unpacking…');
   const reg = await swReady();
   if (!reg) {
@@ -559,7 +572,7 @@ async function openUrl(raw) {
   const res = await fetch(url);
   if (!res.ok) throw new Error('Download failed (HTTP ' + res.status + ').');
   const blob = await res.blob();
-  if ((await sniffBlob(blob)).kind === 'swf') { bundle = null; current = { kind: 'url', name, url }; return startPlayer(); }
+  if ((await sniffBlob(blob)).kind === 'swf') { bundle = null; current = { kind: 'url', name, url, base: curBase() }; return startPlayer(); }
   return openBlob(name, blob);
 }
 
@@ -837,6 +850,17 @@ $('sRem').onchange = e => { S.remember = e.target.checked; store.set('remember',
 $('sScale').onchange = e => { S.scale = e.target.value; store.set('scale', S.scale); if (current) run(startPlayer)(); };
 $('sQual').onchange = e => { S.quality = e.target.value; store.set('quality', S.quality); if (current) run(startPlayer)(); };
 $('sClear').onclick = () => DB.clear().then(() => { refreshRecent(); toast('Saved files cleared'); }).catch(() => {});
+
+/* base URL for games whose extra files are hosted on a website */
+const baseIn = $('baseIn');
+baseIn.value = new URLSearchParams(location.search).get('base') || store.get('base', '');
+baseIn.onchange = () => store.set('base', baseIn.value.trim());
+function curBase() {
+  let b = baseIn.value.trim();
+  if (!b) return '';
+  try { b = new URL(b, location.href).href; } catch (_) { return ''; }
+  return b.replace(/\/?$/, '/');
+}
 
 /* open */
 const fileIn = $('file');
