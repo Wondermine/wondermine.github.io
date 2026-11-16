@@ -65,7 +65,11 @@ body.immersive .bar{display:none}
 .dpad .l{left:8px;top:calc(50% - 14px)}
 .dpad .r{right:8px;top:calc(50% - 14px)}
 .dpad.hu .u,.dpad.hd .d,.dpad.hl .l,.dpad.hr .r{color:var(--acc)}
-.mid{display:flex;flex-direction:column;gap:10px}
+.mid{display:grid;grid-template-columns:repeat(2,auto);gap:8px}
+.tray{display:none;flex:1;flex-wrap:wrap;gap:5px;justify-content:center;touch-action:none}
+.tray .k{width:34px;height:34px;padding:0;border-radius:8px;font-size:12px;font-weight:500}
+.pad.more .dpad,.pad.more .mid,.pad.more .acts{display:none}
+.pad.more .tray{display:flex}
 .acts{display:grid;grid-template-columns:repeat(3,56px);gap:8px;touch-action:none}
 .k{height:56px;border-radius:50%;background:#232a3a;border:1px solid #333c52;font-weight:600;touch-action:none;-webkit-user-select:none;user-select:none}
 .k.wide{grid-column:1/-1;border-radius:28px;height:50px}
@@ -75,7 +79,7 @@ body.immersive .bar{display:none}
   .pad{position:absolute;left:env(safe-area-inset-left);right:env(safe-area-inset-right);bottom:0;background:none;border:0;pointer-events:none;padding-bottom:calc(8px + env(safe-area-inset-bottom));z-index:4}
   .pad>*{pointer-events:auto;opacity:.72}
   .dpad{width:130px;height:130px}
-  .mid{flex-direction:row;align-self:flex-start}
+  .mid{align-self:flex-start}
 }
 
 /* overlays */
@@ -90,6 +94,7 @@ body.immersive .bar{display:none}
 .sheet select{font-size:16px;padding:8px;border-radius:8px;background:#0e1118;border:1px solid var(--line)}
 .sheet input[type=range]{width:55%}
 .sheet .dim{color:var(--dim);font-size:12px}
+.sheet pre{-webkit-user-select:text;user-select:text}
 .sheet .row{display:block;width:100%;text-align:left;padding:13px 4px;border-bottom:1px solid var(--line);word-break:break-all}
 .sheet .big{margin-top:14px}
 </style>
@@ -131,7 +136,7 @@ body.immersive .bar{display:none}
     <h1>SWF Player</h1>
     <p>Play Flash games right in the browser, powered by Ruffle. Works on iPhone and iPad.</p>
     <button class="big" id="bOpen">Open a file</button>
-    <p>.swf (including compressed), .zip bundles with assets, or projector .exe.<br>Game needs extra files? Pick the .swf <b>and</b> its files together, or zip the folder first.</p>
+    <p>.swf (including compressed), .zip bundles with assets, or projector .exe.<br>Games that load extra files (data/, sound/ …) need the <b>whole folder</b>: zip it in the Files app (long-press → Compress) and open the ZIP.</p>
     <form id="urlForm">
       <input id="urlIn" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="…or paste a URL (needs CORS)">
       <button type="submit">Go</button>
@@ -153,6 +158,9 @@ body.immersive .bar{display:none}
   <div class="mid">
     <button class="k sm" data-key="Escape">Esc</button>
     <button class="k sm" data-key="Enter">Enter</button>
+    <button class="k sm" data-key="ShiftLeft">Shift</button>
+    <button class="k sm" data-key="ControlLeft">Ctrl</button>
+    <button class="k sm" id="kMore">Keys</button>
   </div>
   <div class="acts">
     <button class="k" data-key="KeyZ">Z</button>
@@ -160,6 +168,7 @@ body.immersive .bar{display:none}
     <button class="k" data-key="KeyC">C</button>
     <button class="k wide" data-key="Space">Space</button>
   </div>
+  <div class="tray" id="tray"></div>
 </section>
 
 <div id="busy" hidden><div class="spin"></div><div id="busyText">Loading…</div></div>
@@ -195,6 +204,7 @@ body.immersive .bar{display:none}
   <label>Remember opened files <input type="checkbox" id="sRem"></label>
   <label>Show key debug overlay <input type="checkbox" id="sDbg"></label>
   <p class="dim">Changing scale mode or quality restarts the game.</p>
+  <div id="missBox" hidden style="margin-bottom:10px"><p class="dim" id="missHead" style="margin:8px 0 4px"></p><pre id="missList" style="margin:0;max-height:130px;overflow:auto;font-size:11px;white-space:pre-wrap;word-break:break-all;color:#e8b4b4"></pre></div>
   <button class="ghost" id="sSwitch" style="height:42px;margin-bottom:8px" hidden>Run a different SWF from this bundle</button>
   <button class="ghost" id="sClear" style="height:42px">Clear saved files</button>
   <p class="dim" id="verSet" style="text-align:center;margin:14px 0 0"></p>
@@ -221,62 +231,59 @@ function isSwfHeader(b, o) {
   return (c === 0x46 || c === 0x43 || c === 0x5a) && b[o + 1] === 0x57 && b[o + 2] === 0x53 && b[o + 3] > 0 && b[o + 3] < 64;
 }
 
-// Flash projector (.exe / .hqx): SWF followed by 0xFA123456 + uint32 length.
-function findProjectorSwf(b) {
-  const n = b.length;
-  if (n < 20) return null;
-  if (!(b[n - 8] === 0x56 && b[n - 7] === 0x34 && b[n - 6] === 0x12 && b[n - 5] === 0xfa)) return null;
-  const len = ((b[n - 4] | (b[n - 3] << 8) | (b[n - 2] << 16) | (b[n - 1] << 24)) >>> 0);
-  const start = n - 8 - len;
-  if (start < 0 || len < 8 || !isSwfHeader(b, start)) return null;
-  return b.subarray(start, n - 8);
-}
-
-function sniff(b) {
-  if (b.length >= 8 && isSwfHeader(b, 0)) return 'swf'; // FWS / CWS (zlib) / ZWS (LZMA)
-  if (b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && (b[2] === 3 || b[2] === 5) && (b[3] === 4 || b[3] === 6)) return 'zip';
-  if (findProjectorSwf(b)) return 'projector';
-  return 'unknown';
-}
-
-async function inflateRaw(u8) {
-  const stream = new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
-}
-
-function readZipDirectory(bytes) {
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let eocd = -1;
-  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65535); i--) {
-    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+// Works on Blob/File so big files are never loaded whole into JS memory.
+async function sniffBlob(blob) {
+  const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+  if (head.length >= 8 && isSwfHeader(head, 0)) return { kind: 'swf' };   // FWS / CWS (zlib) / ZWS (LZMA)
+  if (head.length >= 4 && head[0] === 0x50 && head[1] === 0x4b && (head[2] === 3 || head[2] === 5) && (head[3] === 4 || head[3] === 6)) return { kind: 'zip' };
+  if (blob.size >= 20) {   // Flash projector (.exe): SWF followed by 0xFA123456 + uint32 length
+    const t = new Uint8Array(await blob.slice(blob.size - 8).arrayBuffer());
+    if (t[0] === 0x56 && t[1] === 0x34 && t[2] === 0x12 && t[3] === 0xfa) {
+      const len = ((t[4] | (t[5] << 8) | (t[6] << 16) | (t[7] << 24)) >>> 0);
+      const start = blob.size - 8 - len;
+      if (start >= 0 && len >= 8) {
+        const h = new Uint8Array(await blob.slice(start, start + 8).arrayBuffer());
+        if (isSwfHeader(h, 0)) return { kind: 'projector', swf: blob.slice(start, blob.size - 8) };
+      }
+    }
   }
+  return { kind: 'unknown' };
+}
+
+async function readZipDirectory(blob) {
+  const size = blob.size;
+  const tailLen = Math.min(size, 22 + 65535);
+  const tail = new DataView(await blob.slice(size - tailLen, size).arrayBuffer());
+  let eocd = -1;
+  for (let i = tailLen - 22; i >= 0; i--) { if (tail.getUint32(i, true) === 0x06054b50) { eocd = i; break; } }
   if (eocd < 0) throw new Error('Not a valid ZIP (no directory found).');
-  const count = rd16(dv, eocd + 10);
-  const cdOff = rd32(dv, eocd + 16);
-  if (count === 0xffff || cdOff === 0xffffffff) throw new Error('ZIP64 archives are not supported.');
+  const count = rd16(tail, eocd + 10), cdSize = rd32(tail, eocd + 12), cdOff = rd32(tail, eocd + 16);
+  if (count === 0xffff || cdOff === 0xffffffff || cdSize === 0xffffffff) throw new Error('ZIP64 archives are not supported.');
+  const buf = new Uint8Array(await blob.slice(cdOff, cdOff + cdSize).arrayBuffer());
+  const dv = new DataView(buf.buffer);
   const dec = new TextDecoder('utf-8');
   const out = [];
-  let p = cdOff;
+  let p = 0;
   for (let i = 0; i < count; i++) {
-    if (p + 46 > bytes.length || dv.getUint32(p, true) !== 0x02014b50) throw new Error('Corrupt ZIP directory.');
+    if (p + 46 > buf.length || dv.getUint32(p, true) !== 0x02014b50) throw new Error('Corrupt ZIP directory.');
     const flags = rd16(dv, p + 8), method = rd16(dv, p + 10);
     const csize = rd32(dv, p + 20), usize = rd32(dv, p + 24);
     const nl = rd16(dv, p + 28), el = rd16(dv, p + 30), cl = rd16(dv, p + 32);
     const lho = rd32(dv, p + 42);
-    out.push({ name: dec.decode(bytes.subarray(p + 46, p + 46 + nl)), flags, method, csize, usize, lho });
+    out.push({ name: dec.decode(buf.subarray(p + 46, p + 46 + nl)), flags, method, csize, usize, lho });
     p += 46 + nl + el + cl;
   }
   return out;
 }
 
-async function extractZipEntry(bytes, e) {
+async function extractZipEntry(blob, e) {
   if (e.flags & 1) throw new Error('Password-protected ZIPs are not supported.');
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (dv.getUint32(e.lho, true) !== 0x04034b50) throw new Error('Corrupt ZIP entry.');
-  const start = e.lho + 30 + rd16(dv, e.lho + 26) + rd16(dv, e.lho + 28);
-  const raw = bytes.subarray(start, start + e.csize);
+  const head = new DataView(await blob.slice(e.lho, e.lho + 30).arrayBuffer());
+  if (head.byteLength < 30 || head.getUint32(0, true) !== 0x04034b50) throw new Error('Corrupt ZIP entry.');
+  const start = e.lho + 30 + rd16(head, 26) + rd16(head, 28);
+  const raw = blob.slice(start, start + e.csize);
   if (e.method === 0) return raw;
-  if (e.method === 8) return inflateRaw(raw);
+  if (e.method === 8) return new Uint8Array(await new Response(raw.stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
   throw new Error('Unsupported ZIP compression (method ' + e.method + ').');
 }
 
@@ -296,9 +303,14 @@ function pickMainSwf(swfs) {
   if (swfs.length === 1) return swfs[0];
   const depth = e => e.path.split('/').length;
   const pref = swfs.filter(e => /(^|\/)(main|index|game|play|preloader|loader)\.swf$/i.test(e.path));
-  if (!pref.length) return null;
-  pref.sort((a, b) => depth(a) - depth(b));
-  return (pref.length === 1 || depth(pref[0]) < depth(pref[1])) ? pref[0] : null;
+  if (pref.length) {
+    pref.sort((a, b) => depth(a) - depth(b));
+    if (pref.length === 1 || depth(pref[0]) < depth(pref[1])) return pref[0];
+  }
+  // Games ship one big main SWF plus many small data SWFs: take the clear giant.
+  const bySize = swfs.filter(e => e.size > 0).sort((a, b) => b.size - a.size);
+  if (bySize.length >= 2 && bySize[0].size >= bySize[1].size * 2) return bySize[0];
+  return null;
 }
 
 const MIME = {
@@ -312,7 +324,7 @@ const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
 
 /* ================= app ================= */
 const $ = id => document.getElementById(id);
-const VERSION = '1.4.0';          // bump on every change
+const VERSION = '1.5.0';          // bump on every change
 const BUILD_DATE = '2026-11-16';
 let ruffleVersion = '';
 function showVersion() {
@@ -434,15 +446,14 @@ function goHome() {
 }
 
 /* ---------- opening content ---------- */
-async function openBytes(name, bytes) {
-  const kind = sniff(bytes);
-  if (kind === 'swf') { current = { kind: 'data', name, bytes }; return startPlayer(); }
-  if (kind === 'projector') {
-    current = { kind: 'data', name: name.replace(/\.(exe|hqx)$/i, '') + '.swf', bytes: findProjectorSwf(bytes) };
+async function openBlob(name, blob) {
+  const k = await sniffBlob(blob);
+  if (k.kind === 'swf') return openBundle([{ path: /\.swf$/i.test(name) ? name : name + '.swf', size: blob.size, load: async () => blob }], 'that file');
+  if (k.kind === 'projector') {
     toast('Pulled the SWF out of the projector file');
-    return startPlayer();
+    return openBundle([{ path: name.replace(/\.(exe|hqx)$/i, '') + '.swf', size: k.swf.size, load: async () => k.swf }], 'that file');
   }
-  if (kind === 'zip') return openZip(name, bytes);
+  if (k.kind === 'zip') return openZip(name, blob);
   throw new Error("That doesn't look like a SWF, a ZIP or a Flash projector.");
 }
 
@@ -474,8 +485,22 @@ async function swReady() {
 
 // A "bundle" is a virtual folder (from a ZIP or several picked files) served by the service worker,
 // so a game's relative loads (other SWFs, xml, images, sounds) resolve like they would on a web server.
+// Even a single SWF goes through it, so any file it asks for that we don't have gets reported.
 let bundle = null; // { swfs: [paths], id, base }
 const bundleUrl = p => new URL('vfs/' + bundle.id + '/' + encodePath(p), bundle.base).href;
+const missing = new Set();
+function updateMissing() {
+  const n = missing.size;
+  $('missBox').hidden = !n;
+  $('missHead').textContent = n + ' file' + (n === 1 ? '' : 's') + ' the game asked for but could not find:';
+  $('missList').textContent = Array.from(missing).slice(0, 60).join('\n') + (n > 60 ? '\n…' : '');
+}
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => {
+  const d = e.data;
+  if (!d || d.type !== 'miss' || missing.has(d.path)) return;
+  missing.add(d.path); updateMissing();
+  if (missing.size <= 2 || missing.size % 25 === 0) toast('Missing file: ' + d.path + (missing.size > 1 ? ' (' + missing.size + ' so far)' : '') + '. Open the whole game folder as a ZIP.', 7000);
+});
 
 async function openBundle(entries, label) {
   const swfs = entries.filter(e => /\.swf$/i.test(e.path));
@@ -492,7 +517,7 @@ async function openBundle(entries, label) {
   if (!reg) {
     // No service worker (private mode / file://): play the main SWF alone.
     bundle = null;
-    current = { kind: 'data', name: main.path, bytes: await main.load() };
+    current = { kind: 'data', name: main.path, bytes: new Uint8Array(await new Response(await main.load()).arrayBuffer()) };
     if (entries.length > 1) toast('Service worker unavailable, so the extra files can’t load.', 5000);
     return startPlayer();
   }
@@ -504,23 +529,24 @@ async function openBundle(entries, label) {
     busy('Unpacking ' + (++i) + ' / ' + entries.length + '…');
     const data = await e.load();
     const url = new URL('vfs/' + id + '/' + encodePath(e.path), reg.scope).href;
-    await cache.put(url, new Response(data, { headers: { 'Content-Type': mimeOf(e.path), 'Content-Length': String(data.length) } }));
+    await cache.put(url, new Response(data, { headers: { 'Content-Type': mimeOf(e.path), 'Content-Length': String(data.size !== undefined ? data.size : data.length) } }));
   }
   bundle = { swfs: swfs.map(e => e.path), id, base: reg.scope };
+  missing.clear(); updateMissing();
   current = { kind: 'url', name: main.path, url: bundleUrl(main.path) };
   return startPlayer();
 }
 
-async function openZip(name, bytes) {
+async function openZip(name, blob) {
   if (typeof DecompressionStream === 'undefined') throw new Error('ZIP support needs iOS / Safari 16.4 or newer.');
-  const entries = cleanZipEntries(readZipDirectory(bytes)).map(e => ({ path: e.path, load: () => extractZipEntry(bytes, e) }));
+  const entries = cleanZipEntries(await readZipDirectory(blob)).map(e => ({ path: e.path, size: e.usize, load: () => extractZipEntry(blob, e) }));
   return openBundle(entries, 'that ZIP');
 }
 
 // Several files picked at once (a SWF plus the assets it loads).
 async function openFiles(files) {
   if (files.length === 1) return openFile(files[0]);
-  const entries = files.map(f => ({ path: f.name, load: async () => new Uint8Array(await f.arrayBuffer()) }));
+  const entries = files.map(f => ({ path: f.name, size: f.size, load: async () => f }));
   if (!entries.some(e => /\.swf$/i.test(e.path))) throw new Error('Pick at least one .swf along with the files it needs.');
   busy('Reading…');
   return openBundle(entries, 'those files');
@@ -532,16 +558,15 @@ async function openUrl(raw) {
   busy('Fetching…');
   const res = await fetch(url);
   if (!res.ok) throw new Error('Download failed (HTTP ' + res.status + ').');
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  if (sniff(bytes) === 'swf') { current = { kind: 'url', name, url }; return startPlayer(); }
-  return openBytes(name, bytes);
+  const blob = await res.blob();
+  if ((await sniffBlob(blob)).kind === 'swf') { bundle = null; current = { kind: 'url', name, url }; return startPlayer(); }
+  return openBlob(name, blob);
 }
 
 async function openFile(f) {
   if (!f) return;
   busy('Reading…');
-  const bytes = new Uint8Array(await f.arrayBuffer());
-  await openBytes(f.name, bytes);
+  await openBlob(f.name, f);
   if (S.remember) DB.put({ name: f.name, size: f.size, added: Date.now(), blob: f }).then(DB.trim).catch(() => {});
 }
 
@@ -587,7 +612,7 @@ async function refreshRecent() {
     b.onclick = run(async () => {
       busy('Reading…');
       const rec = await DB.get(r.name);
-      await openBytes(rec.name, new Uint8Array(await rec.blob.arrayBuffer()));
+      await openBlob(rec.name, rec.blob);
     });
     const sz = document.createElement('span'); sz.className = 'sz'; sz.textContent = fmtSize(r.size);
     const x = document.createElement('button'); x.className = 'rm'; x.appendChild(icon('i-close')); x.setAttribute('aria-label', 'Remove');
@@ -597,19 +622,20 @@ async function refreshRecent() {
 }
 
 /* ---------- virtual keyboard / touch pad ---------- */
-const KEYDEF = [
-  ['ArrowUp', 'ArrowUp', 38], ['ArrowDown', 'ArrowDown', 40], ['ArrowLeft', 'ArrowLeft', 37], ['ArrowRight', 'ArrowRight', 39],
-  ['KeyW', 'w', 87], ['KeyA', 'a', 65], ['KeyS', 's', 83], ['KeyD', 'd', 68],
-  ['KeyZ', 'z', 90], ['KeyX', 'x', 88], ['KeyC', 'c', 67],
-  ['Space', ' ', 32], ['Enter', 'Enter', 13], ['Escape', 'Escape', 27]
-];
-const KEYS = {}; KEYDEF.forEach(([code, key, kc]) => { KEYS[code] = { key, kc }; });
+const KEYS = {};
+const addKey = (code, key, kc, loc) => { KEYS[code] = { key, kc, loc: loc || 0 }; };
+[['ArrowUp', 38], ['ArrowDown', 40], ['ArrowLeft', 37], ['ArrowRight', 39], ['Space', 32, ' '], ['Enter', 13], ['Escape', 27], ['Tab', 9], ['Backspace', 8]]
+  .forEach(([c, kc, k]) => addKey(c, k || c, kc));
+addKey('ShiftLeft', 'Shift', 16, 1); addKey('ControlLeft', 'Control', 17, 1); addKey('AltLeft', 'Alt', 18, 1);
+for (let i = 0; i < 26; i++) addKey('Key' + String.fromCharCode(65 + i), String.fromCharCode(97 + i), 65 + i);
+for (let i = 0; i < 10; i++) addKey('Digit' + i, String(i), 48 + i);
+for (let i = 1; i <= 12; i++) addKey('F' + i, 'F' + i, 111 + i);
 const held = new Set();
 const dbg = { sent: 0, seen: 0, last: '-', on: store.get('dbg', false) };
 window.addEventListener('keydown', () => { dbg.seen++; }, true);
 function keyEvent(type, code, repeat) {
   const k = KEYS[code];
-  return new KeyboardEvent(type, { key: k.key, code, keyCode: k.kc, which: k.kc, repeat: !!repeat, bubbles: true, cancelable: true, composed: true });
+  return new KeyboardEvent(type, { key: k.key, code, keyCode: k.kc, which: k.kc, location: k.loc, repeat: !!repeat, bubbles: true, cancelable: true, composed: true });
 }
 // A real keyboard auto-repeats a held key. Many Flash games move the character from a KEY_DOWN
 // handler (not by polling), so they only move while repeats keep arriving. Emulate that.
@@ -711,6 +737,24 @@ document.querySelectorAll('.k[data-key]').forEach(b => {
     up: () => { b.classList.remove('on'); keyUp(code); }
   });
 });
+// "Keys" tray: every key a game might poll (letters, digits, F1-F12 ...), for games that use more than a pad.
+(function buildTray() {
+  const tray = $('tray');
+  const mk = (label, code) => {
+    const b = document.createElement('button'); b.className = 'k'; b.textContent = label; b.dataset.key = code;
+    bindControl(b, { down: () => { b.classList.add('on'); keyDown(code); }, up: () => { b.classList.remove('on'); keyUp(code); } });
+    tray.appendChild(b);
+  };
+  const back = document.createElement('button'); back.className = 'k sm'; back.textContent = 'Back'; back.style.width = '58px';
+  bindControl(back, { down: () => { $('pad').classList.remove('more'); }, up: () => {} });
+  tray.appendChild(back);
+  for (let i = 1; i <= 9; i++) mk(String(i), 'Digit' + i); mk('0', 'Digit0');
+  for (let i = 1; i <= 12; i++) mk('F' + i, 'F' + i);
+  for (let i = 0; i < 26; i++) mk(String.fromCharCode(65 + i), 'Key' + String.fromCharCode(65 + i));
+  mk('Tab', 'Tab'); mk('Bksp', 'Backspace'); mk('Alt', 'AltLeft');
+  tray.querySelectorAll('.k').forEach(b => { if (b.textContent.length > 2 && b.textContent !== 'Back') b.style.width = '46px'; });
+  bindControl($('kMore'), { down: () => { $('pad').classList.add('more'); }, up: () => {} });
+})();
 // Safety net: if every finger is up, nothing may stay pressed.
 document.addEventListener('touchend', e => { if (e.touches.length === 0) releaseAll(); }, true);
 
@@ -728,7 +772,7 @@ setInterval(syncPlayBtn, 400);
 setInterval(() => {
   const d = $('dbg'); d.hidden = !dbg.on; if (!dbg.on) return;
   d.textContent = 'keys sent: ' + dbg.sent + '  last: ' + dbg.last + '\nkeydowns seen by page: ' + dbg.seen +
-    '\nplayer focused: ' + playerFocused + '  held: ' + Array.from(held).join(',');
+    '\nmissing files: ' + missing.size + '\nplayer focused: ' + playerFocused + '  held: ' + Array.from(held).join(',');
 }, 200);
 
 function toggleImmersive(force) {
@@ -759,6 +803,7 @@ $('bSet').onclick = () => {
   $('sVol').value = S.volume; $('sScale').value = S.scale; $('sQual').value = S.quality;
   $('sDpad').value = S.dpad; $('sRem').checked = S.remember; $('sDbg').checked = dbg.on;
   $('sSwitch').hidden = !(bundle && bundle.swfs.length > 1 && current && current.url && current.url.includes('/vfs/' + bundle.id + '/'));
+  updateMissing();
   showSheet('setSheet');
 };
 $('sSwitch').onclick = run(async () => {

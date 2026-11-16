@@ -14,10 +14,10 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== location.origin) return;
   const base = new URL(self.registration.scope).pathname;
   if (!url.pathname.startsWith(base + 'vfs/')) return;
-  e.respondWith(serve(url));
+  e.respondWith(serve(url, e));
 });
 
-async function serve(url) {
+async function serve(url, e) {
   const cache = await caches.open(CACHE);
   let res = await cache.match(url.origin + url.pathname);
   if (!res) {
@@ -42,5 +42,13 @@ async function serve(url) {
       }
     }
   }
-  return res || new Response('Not found', { status: 404 });
+  if (res) return res;
+  // Tell the page which file the game wanted but we don't have (shown in Settings).
+  try {
+    const rel = safeDecode(url.pathname).replace(/^.*\/vfs\/[^/]+\//, '');
+    const c = e.clientId ? await self.clients.get(e.clientId) : null;
+    const targets = c ? [c] : await self.clients.matchAll({ type: 'window' });
+    targets.forEach(t => t.postMessage({ type: 'miss', path: rel }));
+  } catch (_) {}
+  return new Response('Not found', { status: 404 });
 }
