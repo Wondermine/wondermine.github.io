@@ -164,6 +164,7 @@ body.immersive .bar{display:none}
 
 <div id="busy" hidden><div class="spin"></div><div id="busyText">Loading…</div></div>
 <div id="toast" hidden></div>
+<pre id="dbg" hidden style="position:absolute;left:6px;top:calc(60px + env(safe-area-inset-top));z-index:50;margin:0;padding:6px 8px;border-radius:8px;background:rgba(0,0,0,.7);color:#9f9;font:11px/1.35 ui-monospace,monospace;pointer-events:none"></pre>
 <div id="scrim" hidden></div>
 
 <div class="sheet" id="setSheet" hidden>
@@ -192,6 +193,7 @@ body.immersive .bar{display:none}
     </select>
   </label>
   <label>Remember opened files <input type="checkbox" id="sRem"></label>
+  <label>Show key debug overlay <input type="checkbox" id="sDbg"></label>
   <p class="dim">Changing scale mode or quality restarts the game.</p>
   <button class="ghost" id="sSwitch" style="height:42px;margin-bottom:8px" hidden>Run a different SWF from this bundle</button>
   <button class="ghost" id="sClear" style="height:42px">Clear saved files</button>
@@ -310,7 +312,7 @@ const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
 
 /* ================= app ================= */
 const $ = id => document.getElementById(id);
-const VERSION = '1.3.0';          // bump on every change
+const VERSION = '1.4.0';          // bump on every change
 const BUILD_DATE = '2026-11-16';
 let ruffleVersion = '';
 function showVersion() {
@@ -399,8 +401,8 @@ async function startPlayer() {
     if (!ruffleVersion && ruffle.version) { ruffleVersion = String(ruffle.version); showVersion(); }
     destroyPlayer();
     const p = ruffle.createPlayer();
-    p.tabIndex = 0;
     $('host').appendChild(p);
+    watchFocus(p);
     player = p;
     const cfg = {
       autoplay: 'on', unmuteOverlay: 'visible', contextMenu: 'off', letterbox: 'on',
@@ -603,6 +605,8 @@ const KEYDEF = [
 ];
 const KEYS = {}; KEYDEF.forEach(([code, key, kc]) => { KEYS[code] = { key, kc }; });
 const held = new Set();
+const dbg = { sent: 0, seen: 0, last: '-', on: store.get('dbg', false) };
+window.addEventListener('keydown', () => { dbg.seen++; }, true);
 function keyEvent(type, code, repeat) {
   const k = KEYS[code];
   return new KeyboardEvent(type, { key: k.key, code, keyCode: k.kc, which: k.kc, repeat: !!repeat, bubbles: true, cancelable: true, composed: true });
@@ -620,16 +624,34 @@ function stopRepeat(code) {
   const r = rep.get(code);
   if (r) { clearTimeout(r.t); clearInterval(r.iv); rep.delete(code); }
 }
+// Ruffle only accepts keys while it "has focus", which it tracks from focusin/focusout on the player
+// element. Mirror that exact bookkeeping so we know when we must (re)focus it.
+let playerFocused = false;
+function watchFocus(p) {
+  playerFocused = false;
+  p.addEventListener('focusin', e => { if (e.relatedTarget && p.contains(e.relatedTarget)) return; playerFocused = true; });
+  p.addEventListener('focusout', e => { if (e.relatedTarget && p.contains(e.relatedTarget)) return; playerFocused = false; });
+}
+function ensureFocus() {
+  if (playerFocused || !player) return;
+  try {
+    const inner = player.shadowRoot && player.shadowRoot.activeElement;
+    if (inner) inner.blur();                      // force a clean focusout -> focusin
+    player.focus({ preventScroll: true });
+  } catch (_) {}
+}
 function keyDown(code) {
   if (!player || held.has(code)) return;
   held.add(code);
-  if (document.activeElement !== player) { try { player.focus({ preventScroll: true }); } catch (_) {} }
+  ensureFocus();
+  dbg.sent++; dbg.last = 'down ' + code;
   player.dispatchEvent(keyEvent('keydown', code));
   startRepeat(code);
 }
 function keyUp(code) {
   if (!held.delete(code)) return;
   stopRepeat(code);
+  dbg.last = 'up ' + code;
   if (player) player.dispatchEvent(keyEvent('keyup', code));
 }
 function releaseAll() { Array.from(held).forEach(keyUp); document.querySelectorAll('.k.on').forEach(b => b.classList.remove('on')); $('dpad').className = 'dpad'; }
@@ -639,29 +661,58 @@ function dpadKeys() {
     ? { u: 'KeyW', d: 'KeyS', l: 'KeyA', r: 'KeyD' }
     : { u: 'ArrowUp', d: 'ArrowDown', l: 'ArrowLeft', r: 'ArrowRight' };
 }
+// Touch events (not pointer events): they are the reliable way to build multi-touch pads on iOS Safari.
+// Each control tracks its own touch ids, so holding the D-pad and a button together works.
+function bindControl(el, h) {
+  const active = new Set();
+  el.addEventListener('touchstart', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) { active.add(t.identifier); h.down(t.clientX, t.clientY); }
+  }, { passive: false });
+  el.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (!h.move) return;
+    for (const t of e.changedTouches) if (active.has(t.identifier)) h.move(t.clientX, t.clientY);
+  }, { passive: false });
+  const end = e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) active.delete(t.identifier);
+    if (!active.size) h.up();
+  };
+  el.addEventListener('touchend', end, { passive: false });
+  el.addEventListener('touchcancel', end, { passive: false });
+  // mouse (desktop)
+  let md = false;
+  el.addEventListener('mousedown', e => { e.preventDefault(); md = true; h.down(e.clientX, e.clientY); });
+  window.addEventListener('mousemove', e => { if (md && h.move) h.move(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', () => { if (md) { md = false; h.up(); } });
+  el.addEventListener('contextmenu', e => e.preventDefault());
+}
 (function setupDpad() {
-  const el = $('dpad'); let ptr = null;
-  const apply = e => {
+  const el = $('dpad');
+  const apply = (x, y) => {
     const r = el.getBoundingClientRect();
-    const dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
-    const dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+    const dx = (x - (r.left + r.width / 2)) / (r.width / 2);
+    const dy = (y - (r.top + r.height / 2)) / (r.height / 2);
     const t = 0.28, k = dpadKeys();
     const want = { u: dy < -t, d: dy > t, l: dx < -t, r: dx > t };
     for (const dir of ['u', 'd', 'l', 'r']) want[dir] ? keyDown(k[dir]) : keyUp(k[dir]);
     el.className = 'dpad' + Object.keys(want).filter(d => want[d]).map(d => ' h' + d).join('');
   };
-  const end = e => { if (e.pointerId !== ptr) return; ptr = null; const k = dpadKeys(); Object.values(k).forEach(keyUp); el.className = 'dpad'; };
-  el.addEventListener('pointerdown', e => { e.preventDefault(); ptr = e.pointerId; try { el.setPointerCapture(ptr); } catch (_) {} apply(e); });
-  el.addEventListener('pointermove', e => { if (e.pointerId === ptr) apply(e); });
-  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => el.addEventListener(t, end));
+  bindControl(el, {
+    down: apply, move: apply,
+    up: () => { Object.values(dpadKeys()).forEach(keyUp); el.className = 'dpad'; }
+  });
 })();
 document.querySelectorAll('.k[data-key]').forEach(b => {
-  const code = b.dataset.key; let ptr = null;
-  b.addEventListener('pointerdown', e => { e.preventDefault(); ptr = e.pointerId; try { b.setPointerCapture(ptr); } catch (_) {} b.classList.add('on'); keyDown(code); });
-  const end = e => { if (e.pointerId !== ptr) return; ptr = null; b.classList.remove('on'); keyUp(code); };
-  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => b.addEventListener(t, end));
-  b.addEventListener('contextmenu', e => e.preventDefault());
+  const code = b.dataset.key;
+  bindControl(b, {
+    down: () => { b.classList.add('on'); keyDown(code); },
+    up: () => { b.classList.remove('on'); keyUp(code); }
+  });
 });
+// Safety net: if every finger is up, nothing may stay pressed.
+document.addEventListener('touchend', e => { if (e.touches.length === 0) releaseAll(); }, true);
 
 function updatePad() {
   $('pad').hidden = !(S.pad && current);
@@ -674,6 +725,11 @@ function togglePad() { S.pad = !S.pad; store.set('pad', S.pad); if (!S.pad) rele
 function togglePause() { if (!player) return; try { player.isPlaying ? player.pause() : player.play(); } catch (_) {} syncPlayBtn(); }
 function syncPlayBtn() { const id = (player && !player.isPlaying) ? 'i-play' : 'i-pause'; setIcon($('bPlay'), id); setIcon($('fPlay'), id); }
 setInterval(syncPlayBtn, 400);
+setInterval(() => {
+  const d = $('dbg'); d.hidden = !dbg.on; if (!dbg.on) return;
+  d.textContent = 'keys sent: ' + dbg.sent + '  last: ' + dbg.last + '\nkeydowns seen by page: ' + dbg.seen +
+    '\nplayer focused: ' + playerFocused + '  held: ' + Array.from(held).join(',');
+}, 200);
 
 function toggleImmersive(force) {
   const on = typeof force === 'boolean' ? force : !document.body.classList.contains('immersive');
@@ -701,7 +757,7 @@ $('fExit').onclick = () => toggleImmersive(false);
 /* settings */
 $('bSet').onclick = () => {
   $('sVol').value = S.volume; $('sScale').value = S.scale; $('sQual').value = S.quality;
-  $('sDpad').value = S.dpad; $('sRem').checked = S.remember;
+  $('sDpad').value = S.dpad; $('sRem').checked = S.remember; $('sDbg').checked = dbg.on;
   $('sSwitch').hidden = !(bundle && bundle.swfs.length > 1 && current && current.url && current.url.includes('/vfs/' + bundle.id + '/'));
   showSheet('setSheet');
 };
@@ -715,6 +771,7 @@ $('sSwitch').onclick = run(async () => {
 $('sDone').onclick = closeSheets;
 $('sVol').oninput = e => { S.volume = +e.target.value; S.muted = false; store.set('volume', S.volume); applyVolume(); };
 $('sDpad').onchange = e => { releaseAll(); S.dpad = e.target.value; store.set('dpad', S.dpad); };
+$('sDbg').onchange = e => { dbg.on = e.target.checked; store.set('dbg', dbg.on); };
 $('sRem').onchange = e => { S.remember = e.target.checked; store.set('remember', S.remember); };
 $('sScale').onchange = e => { S.scale = e.target.value; store.set('scale', S.scale); if (current) run(startPlayer)(); };
 $('sQual').onchange = e => { S.quality = e.target.value; store.set('quality', S.quality); if (current) run(startPlayer)(); };
