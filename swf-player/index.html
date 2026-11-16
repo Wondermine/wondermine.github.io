@@ -138,7 +138,7 @@ body.immersive .bar{display:none}
     </form>
     <h2 id="recentH" hidden>Recent</h2>
     <ul id="recent"></ul>
-    <p class="fine">Files stay on your device. Nothing is uploaded.<br>Tip: add <code>?swf=games/foo.swf</code> to the page URL to auto-load a file hosted next to this page.</p>
+    <p class="fine">Files stay on your device. Nothing is uploaded.<br>Tip: add <code>?swf=games/foo.swf</code> to the page URL to auto-load a file hosted next to this page.<br><span id="verHome"></span></p>
   </div>
 
   <div id="fab">
@@ -195,6 +195,7 @@ body.immersive .bar{display:none}
   <p class="dim">Changing scale mode or quality restarts the game.</p>
   <button class="ghost" id="sSwitch" style="height:42px;margin-bottom:8px" hidden>Run a different SWF from this bundle</button>
   <button class="ghost" id="sClear" style="height:42px">Clear saved files</button>
+  <p class="dim" id="verSet" style="text-align:center;margin:14px 0 0"></p>
   <button class="big" id="sDone">Done</button>
 </div>
 
@@ -309,6 +310,13 @@ const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
 
 /* ================= app ================= */
 const $ = id => document.getElementById(id);
+const VERSION = '1.3.0';          // bump on every change
+const BUILD_DATE = '2026-11-16';
+let ruffleVersion = '';
+function showVersion() {
+  const t = 'SWF Player v' + VERSION + ' (' + BUILD_DATE + ')' + (ruffleVersion ? ' · Ruffle ' + ruffleVersion : '');
+  $('verSet').textContent = t; $('verHome').textContent = t;
+}
 const store = {
   get(k, d) { try { const v = localStorage.getItem('swfp.' + k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } },
   set(k, v) { try { localStorage.setItem('swfp.' + k, JSON.stringify(v)); } catch (_) {} }
@@ -388,6 +396,7 @@ async function startPlayer() {
   busy('Starting…');
   try {
     const ruffle = await loadRuffle();
+    if (!ruffleVersion && ruffle.version) { ruffleVersion = String(ruffle.version); showVersion(); }
     destroyPlayer();
     const p = ruffle.createPlayer();
     p.tabIndex = 0;
@@ -737,7 +746,7 @@ window.addEventListener('blur', releaseAll);
 
 /* boot */
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-applyVolume(); updatePad(); refreshRecent();
+applyVolume(); updatePad(); refreshRecent(); showVersion();
 const auto = new URLSearchParams(location.search).get('swf');
 if (auto) run(() => openUrl(auto))();
 </script>
