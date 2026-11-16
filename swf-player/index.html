@@ -312,6 +312,10 @@ function pickMainSwf(swfs) {
     pref.sort((a, b) => depth(a) - depth(b));
     if (pref.length === 1 || depth(pref[0]) < depth(pref[1])) return pref[0];
   }
+  // Exactly one SWF sits closer to the top of the bundle than all the others (e.g. game.swf next to a data/ folder).
+  const minD = Math.min(...swfs.map(depth));
+  const top = swfs.filter(e => depth(e) === minD);
+  if (top.length === 1) return top[0];
   // Games ship one big main SWF plus many small data SWFs: take the clear giant.
   const bySize = swfs.filter(e => e.size > 0).sort((a, b) => b.size - a.size);
   if (bySize.length >= 2 && bySize[0].size >= bySize[1].size * 2) return bySize[0];
@@ -340,7 +344,7 @@ function logAdd(kind, args) {
 ['error', 'warn'].forEach(k => { const o = console[k].bind(console); console[k] = (...a) => { logAdd(k, a); o(...a); }; });
 window.addEventListener('error', e => logAdd('uncaught', [e.message]));
 window.addEventListener('unhandledrejection', e => logAdd('rejection', [e.reason]));
-const VERSION = '1.7.2';          // bump on every change
+const VERSION = '1.7.3';          // bump on every change
 const BUILD_DATE = '2026-11-16';
 let ruffleVersion = '';
 function showVersion() {
@@ -477,6 +481,7 @@ async function openBlob(name, blob) {
 function pick(paths) {
   return new Promise(resolve => {
     const box = $('pickList'); box.textContent = '';
+    paths = paths.slice().sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
     paths.forEach(p => {
       const b = document.createElement('button'); b.className = 'row'; b.textContent = p;
       b.onclick = () => { closeSheets(); resolve(p); };
