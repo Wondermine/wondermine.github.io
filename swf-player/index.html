@@ -345,7 +345,7 @@ function logAdd(kind, args) {
 ['error', 'warn'].forEach(k => { const o = console[k].bind(console); console[k] = (...a) => { logAdd(k, a); o(...a); }; });
 window.addEventListener('error', e => logAdd('uncaught', [e.message]));
 window.addEventListener('unhandledrejection', e => logAdd('rejection', [e.reason]));
-const VERSION = '1.8.0';          // bump on every change
+const VERSION = '1.8.1';          // bump on every change
 const BUILD_DATE = '2026-11-16';
 let ruffleVersion = '';
 function showVersion() {
@@ -411,6 +411,7 @@ function loadRuffle() {
    canvas at the display's refresh rate. The overlay shows the game about one game-frame late (that is what
    interpolation costs). Returns null when WebGL2 is unavailable. */
 function makeSmoother(getSource, mount, opts) {
+  const BLK = 8;                                       // motion block size in source pixels
   opts = opts || {};
   const cv = document.createElement('canvas');
   cv.style.cssText = opts.css || 'position:fixed;left:0;top:0;pointer-events:none;z-index:3;display:none';
@@ -422,7 +423,7 @@ function makeSmoother(getSource, mount, opts) {
   const FLOW = `#version 300 es
 precision highp float; precision highp sampler2D;
 uniform sampler2D uA, uB; uniform vec2 uSrc, uGrid; out vec4 o;
-// Coarse-to-fine block matching for 16x16 px blocks: 4px steps (+-32px), then 2px, then 1px.
+// Coarse-to-fine block matching for 8x8 px blocks: 4px steps (+-32px), then 2px, then 1px.
 // Costs are average colour difference per sample; a tiny penalty prefers "no motion" in flat areas.
 float cost(vec2 uv, vec2 off, float lod, float texel, int n, float pen) {
   vec2 px = texel / uSrc; float sad = 0.0; float h = float(n) * 0.5 - 0.5;
@@ -459,14 +460,25 @@ void main(){
 precision highp float; precision highp sampler2D;
 uniform sampler2D uA, uB, uF; uniform float uT; uniform vec2 uSrc, uOut; out vec4 o;
 vec2 flow(vec2 q){ return (texture(uF, q).rg * 255.0 - 128.0) / uSrc; }
+// how much the two warped frames disagree at q (0 = warp is trustworthy)
+float disagree(vec2 q) {
+  vec2 d = flow(q - uT * flow(q));
+  vec3 a = texture(uA, q - uT * d).rgb, b = texture(uB, q + (1.0 - uT) * d).rgb;
+  return dot(abs(a - b), vec3(1.0));
+}
 void main(){
   vec2 q = vec2(gl_FragCoord.x / uOut.x, 1.0 - gl_FragCoord.y / uOut.y);
-  vec2 d = flow(q - uT * flow(q));                    // look up the motion where the block was at time t
+  vec2 d = flow(q - uT * flow(q));
   vec3 a = texture(uA, q - uT * d).rgb;
   vec3 b = texture(uB, q + (1.0 - uT) * d).rgb;
-  float err = dot(abs(a - b), vec3(1.0));
+  // Worst disagreement in a ring around this pixel, so bad areas fall back as one solid region, not as confetti.
+  float err = disagree(q); vec2 px = 1.0 / uSrc;
+  for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
+    if (i == 0 && j == 0) continue;
+    err = max(err, disagree(q + vec2(float(i), float(j)) * 3.0 * px));
+  }
   vec3 plain = uT < 0.5 ? texture(uA, q).rgb : texture(uB, q).rgb;
-  o = vec4(mix(mix(a, b, uT), plain, smoothstep(0.12, 0.45, err)), 1.0);   // don't trust the warp where it disagrees
+  o = vec4(mix(mix(a, b, uT), plain, smoothstep(0.02, 0.08, err)), 1.0);
 }`;
   function prog(fs) {
     const mk = (t, s) => { const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh); if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh)); return sh; };
@@ -482,7 +494,7 @@ void main(){
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); return t; };
   let texA = tex(), texB = tex();
   const flowTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, flowTex);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   const fbo = gl.createFramebuffer();
   let sw = 0, sh = 0, gw = 0, gh = 0, haveFrames = 0;
@@ -510,7 +522,7 @@ void main(){
   // A new game frame arrived: shift B -> A, upload the new one as B, estimate motion A -> B.
   function push(src) {
     const w = src.width, h = src.height; if (!w || !h) return false;
-    if (w !== sw || h !== sh) { sw = w; sh = h; gw = Math.max(1, Math.ceil(w / 16)); gh = Math.max(1, Math.ceil(h / 16)); haveFrames = 0; }
+    if (w !== sw || h !== sh) { sw = w; sh = h; gw = Math.max(1, Math.ceil(w / BLK)); gh = Math.max(1, Math.ceil(h / BLK)); haveFrames = 0; }
     const t = texA; texA = texB; texB = t;
     upload(texB, src);
     if (!haveFrames) { upload(texA, src); haveFrames = 1; } else haveFrames = 2;
@@ -566,7 +578,6 @@ void main(){
     stop() { running = false; cancelAnimationFrame(raf); cv.remove(); },
   };
 }
-
 
 /* Smooth mode glue. Ruffle's WebGL canvas clears itself after each frame, so while Smooth is on every WebGL context
    is created with preserveDrawingBuffer so the overlay can read the last frame. Takes effect on the next (re)start. */
