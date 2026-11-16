@@ -344,7 +344,7 @@ function logAdd(kind, args) {
 ['error', 'warn'].forEach(k => { const o = console[k].bind(console); console[k] = (...a) => { logAdd(k, a); o(...a); }; });
 window.addEventListener('error', e => logAdd('uncaught', [e.message]));
 window.addEventListener('unhandledrejection', e => logAdd('rejection', [e.reason]));
-const VERSION = '1.7.3';          // bump on every change
+const VERSION = '1.7.4';          // bump on every change
 const BUILD_DATE = '2026-11-16';
 let ruffleVersion = '';
 function showVersion() {
@@ -378,7 +378,7 @@ let sheetCancel = null;
 function showSheet(id, onCancel) { closeSheets(); $(id).hidden = false; $('scrim').hidden = false; sheetCancel = onCancel || null; }
 function closeSheets() { document.querySelectorAll('.sheet').forEach(s => { s.hidden = true; }); $('scrim').hidden = true; sheetCancel = null; }
 $('scrim').addEventListener('click', () => { const c = sheetCancel; closeSheets(); if (c) c(); });
-const run = fn => (...a) => Promise.resolve().then(() => fn(...a)).catch(err => { unbusy(); console.error(err); toast(err && err.message ? err.message : String(err), 5000); });
+const run = fn => (...a) => Promise.resolve().then(() => fn(...a)).catch(err => { try { sessionStorage.removeItem('swfp.opening'); } catch (_) {} unbusy(); console.error(err); toast(err && err.message ? err.message : String(err), 5000); });
 
 /* ---------- Ruffle ---------- */
 let ruffleP;
@@ -453,6 +453,7 @@ async function startPlayer() {
       }
     }
     applyVolume();
+    try { sessionStorage.removeItem('swfp.opening'); } catch (_) {}
     $('empty').hidden = true;
     $('title').textContent = current.name;
     document.title = current.name + ' · SWF Player';
@@ -555,16 +556,22 @@ async function openBundle(entries, label) {
   await caches.delete('swf-vfs');
   const cache = await caches.open('swf-vfs');
   const id = Date.now().toString(36);
-  let i = 0;
+  let i = 0, mainData = null;
   for (const e of entries) {
     busy('Unpacking ' + (++i) + ' / ' + entries.length + '…');
     const data = await e.load();
+    if (e === main) mainData = data;
     const url = new URL('vfs/' + id + '/' + encodePath(e.path), reg.scope).href;
     await cache.put(url, new Response(data, { headers: { 'Content-Type': mimeOf(e.path), 'Content-Length': String(data.size !== undefined ? data.size : data.length) } }));
   }
   bundle = { swfs: swfs.map(e => e.path), id, base: reg.scope };
   missing.clear(); updateMissing();
-  current = { kind: 'url', name: main.path, url: bundleUrl(main.path) };
+  // Start the main SWF straight from memory (a 30+ MB file doesn't have to travel through the service worker);
+  // its relative loads (data/..., sound/...) still resolve against the bundle folder, served by the service worker.
+  busy('Starting…');
+  const dir = main.path.includes('/') ? main.path.slice(0, main.path.lastIndexOf('/') + 1) : '';
+  const bytes = mainData instanceof Uint8Array ? mainData : new Uint8Array(await new Response(mainData).arrayBuffer());
+  current = { kind: 'data', name: main.path, bytes, base: new URL('vfs/' + id + '/' + encodePath(dir), reg.scope).href };
   return startPlayer();
 }
 
@@ -596,6 +603,7 @@ async function openUrl(raw) {
 
 async function openFile(f) {
   if (!f) return;
+  try { sessionStorage.setItem('swfp.opening', f.name + ' (' + fmtSize(f.size) + ')'); } catch (_) {}
   busy('Reading…');
   await openBlob(f.name, f);
   if (S.remember && f.size <= 80 * 1048576) DB.put({ name: f.name, size: f.size, added: Date.now(), blob: f }).then(DB.trim).catch(() => {});
@@ -849,7 +857,7 @@ $('fExit').onclick = () => toggleImmersive(false);
 $('bSet').onclick = () => {
   $('sVol').value = S.volume; $('sScale').value = S.scale; $('sQual').value = S.quality;
   $('sDpad').value = S.dpad; $('sRem').checked = S.remember; $('sDbg').checked = dbg.on;
-  $('sSwitch').hidden = !(bundle && bundle.swfs.length > 1 && current && current.url && current.url.includes('/vfs/' + bundle.id + '/'));
+  $('sSwitch').hidden = !(bundle && bundle.swfs.length > 1 && current && (current.url || current.base || '').includes('/vfs/' + bundle.id + '/'));
   updateMissing();
   $('logBox').textContent = logLines.join('\n') || '(empty)';
   showSheet('setSheet');
@@ -908,6 +916,10 @@ window.addEventListener('blur', releaseAll);
 /* boot */
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 applyVolume(); updatePad(); refreshRecent(); showVersion();
+try {
+  const unfinished = sessionStorage.getItem('swfp.opening');
+  if (unfinished) { sessionStorage.removeItem('swfp.opening'); logAdd('crash', ['The page restarted while opening ' + unfinished + ' (the tab probably ran out of memory)']); toast('The page restarted while opening ' + unfinished + '. Probably out of memory.', 9000); }
+} catch (_) {}
 const auto = new URLSearchParams(location.search).get('swf');
 if (auto) run(() => openUrl(auto))();
 </script>
