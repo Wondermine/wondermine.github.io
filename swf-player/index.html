@@ -208,6 +208,8 @@ body.immersive .bar{display:none}
   <label>Show key debug overlay <input type="checkbox" id="sDbg"></label>
   <p class="dim">Changing scale mode or quality restarts the game.</p>
   <div id="missBox" hidden style="margin-bottom:10px"><p class="dim" id="missHead" style="margin:8px 0 4px"></p><pre id="missList" style="margin:0;max-height:130px;overflow:auto;font-size:11px;white-space:pre-wrap;word-break:break-all;color:#e8b4b4"></pre></div>
+  <p class="dim" style="margin:8px 0 4px">Log (last 60 lines)</p>
+  <pre id="logBox" style="margin:0 0 10px;max-height:140px;overflow:auto;font-size:10px;white-space:pre-wrap;word-break:break-all;color:#c9d1e6"></pre>
   <button class="ghost" id="sSwitch" style="height:42px;margin-bottom:8px" hidden>Run a different SWF from this bundle</button>
   <button class="ghost" id="sClear" style="height:42px">Clear saved files</button>
   <p class="dim" id="verSet" style="text-align:center;margin:14px 0 0"></p>
@@ -327,7 +329,18 @@ const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
 
 /* ================= app ================= */
 const $ = id => document.getElementById(id);
-const VERSION = '1.7.1';          // bump on every change
+/* on-screen log (Settings): console errors/warnings from the page and from Ruffle, plus uncaught errors */
+const logLines = [];
+function logAdd(kind, args) {
+  try {
+    const t = Array.from(args).map(a => a instanceof Error ? (a.stack || a.message) : (a && typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+    logLines.push(kind + ' ' + t.slice(0, 300)); if (logLines.length > 60) logLines.shift();
+  } catch (_) {}
+}
+['error', 'warn'].forEach(k => { const o = console[k].bind(console); console[k] = (...a) => { logAdd(k, a); o(...a); }; });
+window.addEventListener('error', e => logAdd('uncaught', [e.message]));
+window.addEventListener('unhandledrejection', e => logAdd('rejection', [e.reason]));
+const VERSION = '1.7.2';          // bump on every change
 const BUILD_DATE = '2026-11-16';
 let ruffleVersion = '';
 function showVersion() {
@@ -580,7 +593,7 @@ async function openFile(f) {
   if (!f) return;
   busy('Reading…');
   await openBlob(f.name, f);
-  if (S.remember) DB.put({ name: f.name, size: f.size, added: Date.now(), blob: f }).then(DB.trim).catch(() => {});
+  if (S.remember && f.size <= 80 * 1048576) DB.put({ name: f.name, size: f.size, added: Date.now(), blob: f }).then(DB.trim).catch(() => {});
 }
 
 /* ---------- library (IndexedDB) ---------- */
@@ -833,6 +846,7 @@ $('bSet').onclick = () => {
   $('sDpad').value = S.dpad; $('sRem').checked = S.remember; $('sDbg').checked = dbg.on;
   $('sSwitch').hidden = !(bundle && bundle.swfs.length > 1 && current && current.url && current.url.includes('/vfs/' + bundle.id + '/'));
   updateMissing();
+  $('logBox').textContent = logLines.join('\n') || '(empty)';
   showSheet('setSheet');
 };
 $('sSwitch').onclick = run(async () => {
