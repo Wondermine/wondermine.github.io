@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SWF Player">
+<meta name="theme-color" content="#0b0d12">
+<title>SWF Player</title>
+<style>
+:root{--bg:#0b0d12;--panel:#151922;--line:#262c3a;--fg:#e8ebf2;--dim:#8b93a7;--acc:#5b9dff}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{touch-action:manipulation}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:15px/1.4 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;overscroll-behavior:none}
+body{position:fixed;inset:0;display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+button,select,input{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer}
+[hidden]{display:none!important}
+.vh{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+
+.bar{display:flex;align-items:center;gap:2px;padding:4px 6px;background:var(--panel);border-bottom:1px solid var(--line)}
+.bar button{width:42px;height:42px;border-radius:10px;font-size:19px;flex:none}
+.bar button:active{background:#232a3a}
+.title{flex:1;min-width:0;padding:0 8px;font-size:13px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar button.off{opacity:.4}
+
+.stage{position:relative;flex:1;min-height:0;background:#000}
+#host{position:absolute;inset:0;touch-action:none}
+#host ruffle-player{display:block;width:100%;height:100%}
+
+.empty{position:absolute;inset:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:28px 20px calc(28px + env(safe-area-inset-bottom));background:var(--bg);text-align:center}
+.empty h1{margin:8px 0 4px;font-size:26px}
+.empty p{margin:6px auto;max-width:420px;color:var(--dim)}
+.big{display:block;margin:18px auto 8px;padding:14px 28px;border-radius:14px;background:var(--acc);color:#07111f;font-weight:600;font-size:17px}
+.big:active{filter:brightness(.9)}
+#urlForm{display:flex;gap:8px;max-width:420px;margin:14px auto}
+#urlForm input{flex:1;min-width:0;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);-webkit-user-select:text;user-select:text}
+#urlForm button,.ghost{padding:0 16px;border-radius:10px;background:var(--panel);border:1px solid var(--line)}
+.empty h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:26px 0 8px}
+#recent{list-style:none;margin:0 auto;padding:0;max-width:420px;text-align:left}
+#recent li{display:flex;align-items:center;border-bottom:1px solid var(--line)}
+#recent .nm{flex:1;min-width:0;padding:12px 4px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#recent .sz{color:var(--dim);font-size:12px;padding:0 6px}
+#recent .rm{width:40px;height:40px;color:var(--dim);font-size:16px}
+.fine{font-size:12px;margin-top:22px!important}
+
+#fab{position:absolute;top:8px;right:8px;gap:8px;display:none;z-index:5}
+body.immersive #fab{display:flex}
+body.immersive .bar{display:none}
+#fab button{width:44px;height:44px;border-radius:50%;background:rgba(21,25,34,.55);font-size:18px;opacity:.7;border:1px solid rgba(255,255,255,.12)}
+
+/* touch pad */
+.pad{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:var(--panel);border-top:1px solid var(--line);touch-action:none}
+.dpad{position:relative;flex:none;width:148px;height:148px;border-radius:50%;background:rgba(255,255,255,.06);border:1px solid var(--line);touch-action:none}
+.dpad span{position:absolute;color:#aeb6ca;font-size:22px;pointer-events:none}
+.dpad .u{top:8px;left:50%;transform:translateX(-50%)}
+.dpad .d{bottom:8px;left:50%;transform:translateX(-50%)}
+.dpad .l{left:14px;top:50%;transform:translateY(-50%)}
+.dpad .r{right:14px;top:50%;transform:translateY(-50%)}
+.dpad.hu .u,.dpad.hd .d,.dpad.hl .l,.dpad.hr .r{color:var(--acc)}
+.mid{display:flex;flex-direction:column;gap:10px}
+.acts{display:grid;grid-template-columns:repeat(3,56px);gap:8px;touch-action:none}
+.k{height:56px;border-radius:50%;background:#232a3a;border:1px solid #333c52;font-weight:600;touch-action:none;-webkit-user-select:none;user-select:none}
+.k.wide{grid-column:1/-1;border-radius:28px;height:50px}
+.k.sm{height:36px;padding:0 14px;border-radius:18px;font-size:13px;font-weight:500}
+.k.on{background:var(--acc);color:#07111f}
+@media (orientation:landscape) and (max-height:620px){
+  .pad{position:absolute;left:env(safe-area-inset-left);right:env(safe-area-inset-right);bottom:0;background:none;border:0;pointer-events:none;padding-bottom:calc(8px + env(safe-area-inset-bottom));z-index:4}
+  .pad>*{pointer-events:auto;opacity:.72}
+  .dpad{width:130px;height:130px}
+  .mid{flex-direction:row;align-self:flex-start}
+}
+
+/* overlays */
+#busy{position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:rgba(5,7,10,.8);color:var(--fg)}
+.spin{width:34px;height:34px;border-radius:50%;border:3px solid #2b3347;border-top-color:var(--acc);animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+#toast{position:absolute;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);max-width:88%;padding:10px 16px;border-radius:12px;background:#222a3b;border:1px solid #333c52;font-size:14px;z-index:30;text-align:center;-webkit-user-select:text;user-select:text}
+#scrim{position:absolute;inset:0;background:rgba(0,0,0,.55);z-index:40}
+.sheet{position:absolute;left:0;right:0;bottom:0;z-index:41;max-height:80%;overflow:auto;background:var(--panel);border-radius:18px 18px 0 0;padding:10px 18px calc(18px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
+.sheet h3{margin:8px 0 12px}
+.sheet label{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.sheet select{padding:8px;border-radius:8px;background:#0e1118;border:1px solid var(--line)}
+.sheet input[type=range]{width:55%}
+.sheet .dim{color:var(--dim);font-size:12px}
+.sheet .row{display:block;width:100%;text-align:left;padding:13px 4px;border-bottom:1px solid var(--line);word-break:break-all}
+.sheet .big{margin-top:14px}
+</style>
+</head>
+<body>
+
+<header class="bar" id="bar">
+  <button id="bHome" aria-label="Home">⌂</button>
+  <div class="title" id="title">SWF Player</div>
+  <button id="bPlay" aria-label="Pause or resume">⏸</button>
+  <button id="bRestart" aria-label="Restart">⟲</button>
+  <button id="bMute" aria-label="Mute">🔊</button>
+  <button id="bPad" aria-label="Touch controls">🎮</button>
+  <button id="bFs" aria-label="Fullscreen">⛶</button>
+  <button id="bSet" aria-label="Settings">⚙</button>
+</header>
+
+<main class="stage" id="stage">
+  <div id="host"></div>
+
+  <div class="empty" id="empty">
+    <h1>SWF Player</h1>
+    <p>Play Flash games right in the browser, powered by Ruffle. Works on iPhone and iPad.</p>
+    <button class="big" id="bOpen">Open a file</button>
+    <p>.swf (including compressed), .zip bundles with assets, or projector .exe</p>
+    <form id="urlForm">
+      <input id="urlIn" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="…or paste a URL (needs CORS)">
+      <button type="submit">Go</button>
+    </form>
+    <h2 id="recentH" hidden>Recent</h2>
+    <ul id="recent"></ul>
+    <p class="fine">Files stay on your device. Nothing is uploaded.<br>Tip: add <code>?swf=games/foo.swf</code> to the page URL to auto-load a file hosted next to this page.</p>
+  </div>
+
+  <div id="fab">
+    <button id="fPlay" aria-label="Pause or resume">⏸</button>
+    <button id="fPad" aria-label="Touch controls">🎮</button>
+    <button id="fExit" aria-label="Exit fullscreen">✕</button>
+  </div>
+</main>
+
+<section class="pad" id="pad" hidden>
+  <div class="dpad" id="dpad"><span class="u">▲</span><span class="d">▼</span><span class="l">◀</span><span class="r">▶</span></div>
+  <div class="mid">
+    <button class="k sm" data-key="Escape">Esc</button>
+    <button class="k sm" data-key="Enter">Enter</button>
+  </div>
+  <div class="acts">
+    <button class="k" data-key="KeyZ">Z</button>
+    <button class="k" data-key="KeyX">X</button>
+    <button class="k" data-key="KeyC">C</button>
+    <button class="k wide" data-key="Space">Space</button>
+  </div>
+</section>
+
+<div id="busy" hidden><div class="spin"></div><div id="busyText">Loading…</div></div>
+<div id="toast" hidden></div>
+<div id="scrim" hidden></div>
+
+<div class="sheet" id="setSheet" hidden>
+  <h3>Settings</h3>
+  <label>Volume <input type="range" id="sVol" min="0" max="1" step="0.05"></label>
+  <label>Scale mode
+    <select id="sScale">
+      <option value="showAll">Fit (keep ratio)</option>
+      <option value="noBorder">Fill (crop edges)</option>
+      <option value="exactFit">Stretch</option>
+      <option value="noScale">Original size</option>
+    </select>
+  </label>
+  <label>Quality
+    <select id="sQual">
+      <option value="low">Low</option>
+      <option value="medium">Medium</option>
+      <option value="high">High</option>
+      <option value="best">Best</option>
+    </select>
+  </label>
+  <label>D-pad sends
+    <select id="sDpad">
+      <option value="arrows">Arrow keys</option>
+      <option value="wasd">W A S D</option>
+    </select>
+  </label>
+  <label>Remember opened files <input type="checkbox" id="sRem"></label>
+  <p class="dim">Changing scale mode or quality restarts the game.</p>
+  <button class="ghost" id="sClear" style="height:42px">Clear saved files</button>
+  <button class="big" id="sDone">Done</button>
+</div>
+
+<div class="sheet" id="pickSheet" hidden>
+  <h3>Which SWF should I run?</h3>
+  <div id="pickList"></div>
+</div>
+
+<input class="vh" type="file" id="file" tabindex="-1">
+
+<script>
+'use strict';
+
+/* ================= pure helpers (no DOM; unit-tested) ================= */
+// ==PURE==
+const rd16 = (d, o) => d.getUint16(o, true);
+const rd32 = (d, o) => d.getUint32(o, true);
+
+function isSwfHeader(b, o) {
+  const c = b[o];
+  return (c === 0x46 || c === 0x43 || c === 0x5a) && b[o + 1] === 0x57 && b[o + 2] === 0x53 && b[o + 3] > 0 && b[o + 3] < 64;
+}
+
+// Flash projector (.exe / .hqx): SWF followed by 0xFA123456 + uint32 length.
+function findProjectorSwf(b) {
+  const n = b.length;
+  if (n < 20) return null;
+  if (!(b[n - 8] === 0x56 && b[n - 7] === 0x34 && b[n - 6] === 0x12 && b[n - 5] === 0xfa)) return null;
+  const len = ((b[n - 4] | (b[n - 3] << 8) | (b[n - 2] << 16) | (b[n - 1] << 24)) >>> 0);
+  const start = n - 8 - len;
+  if (start < 0 || len < 8 || !isSwfHeader(b, start)) return null;
+  return b.subarray(start, n - 8);
+}
+
+function sniff(b) {
+  if (b.length >= 8 && isSwfHeader(b, 0)) return 'swf'; // FWS / CWS (zlib) / ZWS (LZMA)
+  if (b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && (b[2] === 3 || b[2] === 5) && (b[3] === 4 || b[3] === 6)) return 'zip';
+  if (findProjectorSwf(b)) return 'projector';
+  return 'unknown';
+}
+
+async function inflateRaw(u8) {
+  const stream = new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function readZipDirectory(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65535); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Not a valid ZIP (no directory found).');
+  const count = rd16(dv, eocd + 10);
+  const cdOff = rd32(dv, eocd + 16);
+  if (count === 0xffff || cdOff === 0xffffffff) throw new Error('ZIP64 archives are not supported.');
+  const dec = new TextDecoder('utf-8');
+  const out = [];
+  let p = cdOff;
+  for (let i = 0; i < count; i++) {
+    if (p + 46 > bytes.length || dv.getUint32(p, true) !== 0x02014b50) throw new Error('Corrupt ZIP directory.');
+    const flags = rd16(dv, p + 8), method = rd16(dv, p + 10);
+    const csize = rd32(dv, p + 20), usize = rd32(dv, p + 24);
+    const nl = rd16(dv, p + 28), el = rd16(dv, p + 30), cl = rd16(dv, p + 32);
+    const lho = rd32(dv, p + 42);
+    out.push({ name: dec.decode(bytes.subarray(p + 46, p + 46 + nl)), flags, method, csize, usize, lho });
+    p += 46 + nl + el + cl;
+  }
+  return out;
+}
+
+async function extractZipEntry(bytes, e) {
+  if (e.flags & 1) throw new Error('Password-protected ZIPs are not supported.');
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (dv.getUint32(e.lho, true) !== 0x04034b50) throw new Error('Corrupt ZIP entry.');
+  const start = e.lho + 30 + rd16(dv, e.lho + 26) + rd16(dv, e.lho + 28);
+  const raw = bytes.subarray(start, start + e.csize);
+  if (e.method === 0) return raw;
+  if (e.method === 8) return inflateRaw(raw);
+  throw new Error('Unsupported ZIP compression (method ' + e.method + ').');
+}
+
+function cleanZipEntries(entries) {
+  let list = entries
+    .filter(e => !e.name.endsWith('/') && !/(^|\/)(__MACOSX|\.DS_Store)(\/|$)/.test(e.name))
+    .map(e => Object.assign({}, e, { path: e.name.replace(/\\/g, '/').split('/').filter(s => s && s !== '.' && s !== '..').join('/') }))
+    .filter(e => e.path);
+  if (list.length && list.every(e => e.path.includes('/'))) {
+    const top = list[0].path.split('/')[0];
+    if (list.every(e => e.path.split('/')[0] === top)) list.forEach(e => { e.path = e.path.slice(top.length + 1); });
+  }
+  return list;
+}
+
+function pickMainSwf(swfs) {
+  if (swfs.length === 1) return swfs[0];
+  const depth = e => e.path.split('/').length;
+  const pref = swfs.filter(e => /(^|\/)(main|index|game|play|preloader|loader)\.swf$/i.test(e.path));
+  if (!pref.length) return null;
+  pref.sort((a, b) => depth(a) - depth(b));
+  return (pref.length === 1 || depth(pref[0]) < depth(pref[1])) ? pref[0] : null;
+}
+
+const MIME = {
+  swf: 'application/x-shockwave-flash', xml: 'text/xml', json: 'application/json', txt: 'text/plain', html: 'text/html',
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml',
+  mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', flv: 'video/x-flv', css: 'text/css'
+};
+const mimeOf = p => MIME[(p.split('.').pop() || '').toLowerCase()] || 'application/octet-stream';
+const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
+// ==/PURE==
+
+/* ================= app ================= */
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('swfp.' + k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } },
+  set(k, v) { try { localStorage.setItem('swfp.' + k, JSON.stringify(v)); } catch (_) {} }
+};
+const coarse = matchMedia('(pointer:coarse)').matches;
+const S = {
+  scale: store.get('scale', 'showAll'), quality: store.get('quality', 'high'),
+  volume: store.get('volume', 1), muted: false,
+  dpad: store.get('dpad', 'arrows'), remember: store.get('remember', true), pad: store.get('pad', coarse)
+};
+
+let player = null;
+let current = null;              // { kind:'data', name, bytes } | { kind:'url', name, url }
+let blobUrls = [];
+
+/* ---------- ui helpers ---------- */
+let toastTimer;
+function toast(msg, ms = 3200) {
+  const t = $('toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+}
+function busy(text) { $('busyText').textContent = text; $('busy').hidden = false; }
+function unbusy() { $('busy').hidden = true; }
+let sheetCancel = null;
+function showSheet(id, onCancel) { closeSheets(); $(id).hidden = false; $('scrim').hidden = false; sheetCancel = onCancel || null; }
+function closeSheets() { document.querySelectorAll('.sheet').forEach(s => { s.hidden = true; }); $('scrim').hidden = true; sheetCancel = null; }
+$('scrim').addEventListener('click', () => { const c = sheetCancel; closeSheets(); if (c) c(); });
+const run = fn => (...a) => Promise.resolve().then(() => fn(...a)).catch(err => { unbusy(); console.error(err); toast(err && err.message ? err.message : String(err), 5000); });
+
+/* ---------- Ruffle ---------- */
+let ruffleP;
+function loadRuffle() {
+  if (ruffleP) return ruffleP;
+  window.RufflePlayer = window.RufflePlayer || {};
+  window.RufflePlayer.config = Object.assign({ polyfills: false }, window.RufflePlayer.config);
+  const urls = [
+    'https://unpkg.com/@ruffle-rs/ruffle/ruffle.js',
+    'https://cdn.jsdelivr.net/npm/@ruffle-rs/ruffle/ruffle.js'
+  ];
+  ruffleP = new Promise((resolve, reject) => {
+    const attempt = i => {
+      if (i >= urls.length) { ruffleP = null; return reject(new Error('Could not load Ruffle. Check your connection.')); }
+      const s = document.createElement('script');
+      s.src = urls[i];
+      s.onload = () => (window.RufflePlayer && window.RufflePlayer.newest) ? resolve(window.RufflePlayer.newest()) : attempt(i + 1);
+      s.onerror = () => { s.remove(); attempt(i + 1); };
+      document.head.appendChild(s);
+    };
+    attempt(0);
+  });
+  return ruffleP;
+}
+
+function destroyPlayer() {
+  releaseAll();
+  if (player) { try { player.remove(); } catch (_) {} player = null; }
+  blobUrls.forEach(u => URL.revokeObjectURL(u)); blobUrls = [];
+}
+
+function applyVolume() { if (player) { try { player.volume = S.muted ? 0 : S.volume; } catch (_) {} } $('bMute').textContent = S.muted || S.volume === 0 ? '🔇' : '🔊'; }
+
+async function startPlayer() {
+  if (!current) return;
+  busy('Starting…');
+  try {
+    const ruffle = await loadRuffle();
+    destroyPlayer();
+    const p = ruffle.createPlayer();
+    p.tabIndex = 0;
+    $('host').appendChild(p);
+    player = p;
+    const cfg = {
+      autoplay: 'on', unmuteOverlay: 'visible', contextMenu: 'off', letterbox: 'on',
+      scale: S.scale, quality: S.quality, allowFullscreen: true
+    };
+    if (current.kind === 'url') {
+      await p.load(Object.assign({ url: current.url }, cfg));
+    } else {
+      try {
+        await p.load(Object.assign({ data: current.bytes, swfFileName: current.name }, cfg));
+      } catch (e) {
+        const u = URL.createObjectURL(new Blob([current.bytes], { type: 'application/x-shockwave-flash' }));
+        blobUrls.push(u);
+        await p.load(Object.assign({ url: u }, cfg));
+      }
+    }
+    applyVolume();
+    $('empty').hidden = true;
+    $('title').textContent = current.name;
+    document.title = current.name + ' · SWF Player';
+    updatePad();
+  } finally { unbusy(); }
+}
+
+function goHome() {
+  destroyPlayer(); current = null;
+  $('empty').hidden = false; $('title').textContent = 'SWF Player'; document.title = 'SWF Player';
+  toggleImmersive(false); updatePad(); refreshRecent();
+}
+
+/* ---------- opening content ---------- */
+async function openBytes(name, bytes) {
+  const kind = sniff(bytes);
+  if (kind === 'swf') { current = { kind: 'data', name, bytes }; return startPlayer(); }
+  if (kind === 'projector') {
+    current = { kind: 'data', name: name.replace(/\.(exe|hqx)$/i, '') + '.swf', bytes: findProjectorSwf(bytes) };
+    toast('Pulled the SWF out of the projector file');
+    return startPlayer();
+  }
+  if (kind === 'zip') return openZip(name, bytes);
+  throw new Error("That doesn't look like a SWF, a ZIP or a Flash projector.");
+}
+
+function pick(paths) {
+  return new Promise(resolve => {
+    const box = $('pickList'); box.textContent = '';
+    paths.forEach(p => {
+      const b = document.createElement('button'); b.className = 'row'; b.textContent = p;
+      b.onclick = () => { closeSheets(); resolve(p); };
+      box.appendChild(b);
+    });
+    showSheet('pickSheet', () => resolve(null));
+  });
+}
+
+async function swReady() {
+  if (!('serviceWorker' in navigator) || !window.caches) return null;
+  try {
+    const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((_, r) => setTimeout(r, 4000))]);
+    if (!navigator.serviceWorker.controller) {
+      await Promise.race([
+        new Promise(r => navigator.serviceWorker.addEventListener('controllerchange', r, { once: true })),
+        new Promise(r => setTimeout(r, 1500))
+      ]);
+    }
+    return navigator.serviceWorker.controller ? reg : null;
+  } catch (_) { return null; }
+}
+
+async function openZip(name, bytes) {
+  if (typeof DecompressionStream === 'undefined') throw new Error('ZIP support needs iOS / Safari 16.4 or newer.');
+  const list = cleanZipEntries(readZipDirectory(bytes));
+  const swfs = list.filter(e => /\.swf$/i.test(e.path));
+  if (!swfs.length) throw new Error('No .swf file found inside that ZIP.');
+  let main = pickMainSwf(swfs);
+  if (!main) {
+    unbusy();
+    const chosen = await pick(swfs.map(e => e.path));
+    if (!chosen) return;
+    main = swfs.find(e => e.path === chosen);
+  }
+  busy('Unpacking…');
+  const reg = await swReady();
+  if (!reg) {
+    // No service worker (private mode / file://): play the main SWF alone.
+    const data = await extractZipEntry(bytes, main);
+    current = { kind: 'data', name: main.path, bytes: data };
+    if (list.length > 1) toast('Service worker unavailable, so the bundle’s extra files can’t load.', 5000);
+    return startPlayer();
+  }
+  await caches.delete('swf-vfs');
+  const cache = await caches.open('swf-vfs');
+  const id = Date.now().toString(36);
+  let i = 0;
+  for (const e of list) {
+    busy('Unpacking ' + (++i) + ' / ' + list.length + '…');
+    const data = await extractZipEntry(bytes, e);
+    const url = new URL('vfs/' + id + '/' + encodePath(e.path), reg.scope).href;
+    await cache.put(url, new Response(data, { headers: { 'Content-Type': mimeOf(e.path), 'Content-Length': String(data.length) } }));
+  }
+  current = { kind: 'url', name: main.path, url: new URL('vfs/' + id + '/' + encodePath(main.path), reg.scope).href };
+  return startPlayer();
+}
+
+async function openUrl(raw) {
+  const url = new URL(raw, location.href).href;
+  const name = decodeURIComponent(url.split('?')[0].split('/').pop() || 'movie.swf');
+  busy('Fetching…');
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Download failed (HTTP ' + res.status + ').');
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (sniff(bytes) === 'swf') { current = { kind: 'url', name, url }; return startPlayer(); }
+  return openBytes(name, bytes);
+}
+
+async function openFile(f) {
+  if (!f) return;
+  busy('Reading…');
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  await openBytes(f.name, bytes);
+  if (S.remember) DB.put({ name: f.name, size: f.size, added: Date.now(), blob: f }).then(DB.trim).catch(() => {});
+}
+
+/* ---------- library (IndexedDB) ---------- */
+const DB = {
+  open() {
+    return this._p || (this._p = new Promise((res, rej) => {
+      const r = indexedDB.open('swfplayer', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('files', { keyPath: 'name' });
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    }));
+  },
+  async tx(mode, fn) {
+    const db = await DB.open();
+    return new Promise((res, rej) => {
+      const t = db.transaction('files', mode);
+      const req = fn(t.objectStore('files'));
+      t.oncomplete = () => res(req ? req.result : undefined);
+      t.onerror = t.onabort = () => rej(t.error);
+    });
+  },
+  list() { return DB.tx('readonly', s => s.getAll()); },
+  put(rec) { return DB.tx('readwrite', s => s.put(rec)); },
+  get(name) { return DB.tx('readonly', s => s.get(name)); },
+  del(name) { return DB.tx('readwrite', s => s.delete(name)); },
+  clear() { return DB.tx('readwrite', s => s.clear()); },
+  async trim() {
+    const all = (await DB.list()).sort((a, b) => b.added - a.added);
+    for (const r of all.slice(12)) await DB.del(r.name);
+  }
+};
+
+const fmtSize = n => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+async function refreshRecent() {
+  const ul = $('recent'); ul.textContent = '';
+  let items = [];
+  try { items = (await DB.list()).sort((a, b) => b.added - a.added); } catch (_) {}
+  $('recentH').hidden = !items.length;
+  items.forEach(r => {
+    const li = document.createElement('li');
+    const b = document.createElement('button'); b.className = 'nm'; b.textContent = r.name;
+    b.onclick = run(async () => {
+      busy('Reading…');
+      const rec = await DB.get(r.name);
+      await openBytes(rec.name, new Uint8Array(await rec.blob.arrayBuffer()));
+    });
+    const sz = document.createElement('span'); sz.className = 'sz'; sz.textContent = fmtSize(r.size);
+    const x = document.createElement('button'); x.className = 'rm'; x.textContent = '✕'; x.setAttribute('aria-label', 'Remove');
+    x.onclick = () => DB.del(r.name).then(refreshRecent).catch(() => {});
+    li.append(b, sz, x); ul.appendChild(li);
+  });
+}
+
+/* ---------- virtual keyboard / touch pad ---------- */
+const KEYDEF = [
+  ['ArrowUp', 'ArrowUp', 38], ['ArrowDown', 'ArrowDown', 40], ['ArrowLeft', 'ArrowLeft', 37], ['ArrowRight', 'ArrowRight', 39],
+  ['KeyW', 'w', 87], ['KeyA', 'a', 65], ['KeyS', 's', 83], ['KeyD', 'd', 68],
+  ['KeyZ', 'z', 90], ['KeyX', 'x', 88], ['KeyC', 'c', 67],
+  ['Space', ' ', 32], ['Enter', 'Enter', 13], ['Escape', 'Escape', 27]
+];
+const KEYS = {}; KEYDEF.forEach(([code, key, kc]) => { KEYS[code] = { key, kc }; });
+const held = new Set();
+function keyEvent(type, code) {
+  const k = KEYS[code];
+  return new KeyboardEvent(type, { key: k.key, code, keyCode: k.kc, which: k.kc, bubbles: true, cancelable: true, composed: true });
+}
+function keyDown(code) {
+  if (!player || held.has(code)) return;
+  held.add(code);
+  if (document.activeElement !== player) { try { player.focus({ preventScroll: true }); } catch (_) {} }
+  player.dispatchEvent(keyEvent('keydown', code));
+}
+function keyUp(code) {
+  if (!held.delete(code)) return;
+  if (player) player.dispatchEvent(keyEvent('keyup', code));
+}
+function releaseAll() { Array.from(held).forEach(keyUp); document.querySelectorAll('.k.on').forEach(b => b.classList.remove('on')); $('dpad').className = 'dpad'; }
+
+function dpadKeys() {
+  return S.dpad === 'wasd'
+    ? { u: 'KeyW', d: 'KeyS', l: 'KeyA', r: 'KeyD' }
+    : { u: 'ArrowUp', d: 'ArrowDown', l: 'ArrowLeft', r: 'ArrowRight' };
+}
+(function setupDpad() {
+  const el = $('dpad'); let ptr = null;
+  const apply = e => {
+    const r = el.getBoundingClientRect();
+    const dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+    const dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+    const t = 0.28, k = dpadKeys();
+    const want = { u: dy < -t, d: dy > t, l: dx < -t, r: dx > t };
+    for (const dir of ['u', 'd', 'l', 'r']) want[dir] ? keyDown(k[dir]) : keyUp(k[dir]);
+    el.className = 'dpad' + Object.keys(want).filter(d => want[d]).map(d => ' h' + d).join('');
+  };
+  const end = e => { if (e.pointerId !== ptr) return; ptr = null; const k = dpadKeys(); Object.values(k).forEach(keyUp); el.className = 'dpad'; };
+  el.addEventListener('pointerdown', e => { e.preventDefault(); ptr = e.pointerId; try { el.setPointerCapture(ptr); } catch (_) {} apply(e); });
+  el.addEventListener('pointermove', e => { if (e.pointerId === ptr) apply(e); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => el.addEventListener(t, end));
+})();
+document.querySelectorAll('.k[data-key]').forEach(b => {
+  const code = b.dataset.key; let ptr = null;
+  b.addEventListener('pointerdown', e => { e.preventDefault(); ptr = e.pointerId; try { b.setPointerCapture(ptr); } catch (_) {} b.classList.add('on'); keyDown(code); });
+  const end = e => { if (e.pointerId !== ptr) return; ptr = null; b.classList.remove('on'); keyUp(code); };
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => b.addEventListener(t, end));
+  b.addEventListener('contextmenu', e => e.preventDefault());
+});
+
+function updatePad() {
+  $('pad').hidden = !(S.pad && current);
+  $('bPad').classList.toggle('off', !S.pad);
+  $('fPad').style.opacity = S.pad ? '' : '.35';
+}
+function togglePad() { S.pad = !S.pad; store.set('pad', S.pad); if (!S.pad) releaseAll(); updatePad(); }
+
+/* ---------- toolbar ---------- */
+function togglePause() { if (!player) return; try { player.isPlaying ? player.pause() : player.play(); } catch (_) {} syncPlayBtn(); }
+function syncPlayBtn() { const t = (player && !player.isPlaying) ? '▶' : '⏸'; $('bPlay').textContent = t; $('fPlay').textContent = t; }
+setInterval(syncPlayBtn, 400);
+
+function toggleImmersive(force) {
+  const on = typeof force === 'boolean' ? force : !document.body.classList.contains('immersive');
+  document.body.classList.toggle('immersive', on);
+  const el = document.documentElement;
+  try {
+    let r;
+    if (on && !(document.fullscreenElement || document.webkitFullscreenElement)) r = (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
+    else if (!on && (document.fullscreenElement || document.webkitFullscreenElement)) r = (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+    if (r && r.catch) r.catch(() => {});
+  } catch (_) {}
+}
+['fullscreenchange', 'webkitfullscreenchange'].forEach(t => document.addEventListener(t, () => {
+  if (!(document.fullscreenElement || document.webkitFullscreenElement)) document.body.classList.remove('immersive');
+}));
+
+$('bHome').onclick = goHome;
+$('bPlay').onclick = $('fPlay').onclick = togglePause;
+$('bRestart').onclick = run(() => startPlayer());
+$('bMute').onclick = () => { S.muted = !S.muted; applyVolume(); };
+$('bPad').onclick = $('fPad').onclick = togglePad;
+$('bFs').onclick = () => toggleImmersive();
+$('fExit').onclick = () => toggleImmersive(false);
+
+/* settings */
+$('bSet').onclick = () => {
+  $('sVol').value = S.volume; $('sScale').value = S.scale; $('sQual').value = S.quality;
+  $('sDpad').value = S.dpad; $('sRem').checked = S.remember;
+  showSheet('setSheet');
+};
+$('sDone').onclick = closeSheets;
+$('sVol').oninput = e => { S.volume = +e.target.value; S.muted = false; store.set('volume', S.volume); applyVolume(); };
+$('sDpad').onchange = e => { releaseAll(); S.dpad = e.target.value; store.set('dpad', S.dpad); };
+$('sRem').onchange = e => { S.remember = e.target.checked; store.set('remember', S.remember); };
+$('sScale').onchange = e => { S.scale = e.target.value; store.set('scale', S.scale); if (current) run(startPlayer)(); };
+$('sQual').onchange = e => { S.quality = e.target.value; store.set('quality', S.quality); if (current) run(startPlayer)(); };
+$('sClear').onclick = () => DB.clear().then(() => { refreshRecent(); toast('Saved files cleared'); }).catch(() => {});
+
+/* open */
+const fileIn = $('file');
+$('bOpen').onclick = () => fileIn.click();
+fileIn.onchange = run(async () => { const f = fileIn.files[0]; fileIn.value = ''; await openFile(f); });
+$('urlForm').onsubmit = e => { e.preventDefault(); const v = $('urlIn').value.trim(); if (v) run(() => openUrl(v))(); };
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer && e.dataTransfer.files[0]; if (f) run(() => openFile(f))(); });
+
+/* iOS: kill pinch / page scroll while playing */
+['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
+document.addEventListener('touchmove', e => { if (e.target.closest && e.target.closest('#host,.pad')) e.preventDefault(); }, { passive: false });
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+window.addEventListener('blur', releaseAll);
+
+/* boot */
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+applyVolume(); updatePad(); refreshRecent();
+const auto = new URLSearchParams(location.search).get('swf');
+if (auto) run(() => openUrl(auto))();
+</script>
+</body>
+</html>
