@@ -345,7 +345,7 @@ function logAdd(kind, args) {
 ['error', 'warn'].forEach(k => { const o = console[k].bind(console); console[k] = (...a) => { logAdd(k, a); o(...a); }; });
 window.addEventListener('error', e => logAdd('uncaught', [e.message]));
 window.addEventListener('unhandledrejection', e => logAdd('rejection', [e.reason]));
-const VERSION = '1.8.1';          // bump on every change
+const VERSION = '1.8.2';          // bump on every change
 const BUILD_DATE = '2026-11-16';
 let ruffleVersion = '';
 function showVersion() {
@@ -416,13 +416,16 @@ function makeSmoother(getSource, mount, opts) {
   const cv = document.createElement('canvas');
   cv.style.cssText = opts.css || 'position:fixed;left:0;top:0;pointer-events:none;z-index:3;display:none';
   mount.appendChild(cv);
-  const gl = cv.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
-  if (!gl) { cv.remove(); return null; }
+  makeSmoother.fail = '';
+  let gl = null;
+  try { gl = cv.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false }); } catch (_) {}
+  if (!gl) { try { gl = cv.getContext('webgl2'); } catch (_) {} }
+  if (!gl) { makeSmoother.fail = 'could not create a WebGL2 context'; cv.remove(); return null; }
 
   const VS = '#version 300 es\nvoid main(){vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));gl_Position=vec4(p*2.0-1.0,0.0,1.0);}';
   const FLOW = `#version 300 es
 precision highp float; precision highp sampler2D;
-uniform sampler2D uA, uB; uniform vec2 uSrc, uGrid; out vec4 o;
+uniform sampler2D uA, uB; uniform vec2 uSrc, uGrid; uniform ivec3 uR, uN; out vec4 o;   // search radii / sample counts per stage (uniforms keep the loops from being unrolled)
 // Coarse-to-fine block matching for 8x8 px blocks: 4px steps (+-32px), then 2px, then 1px.
 // Costs are average colour difference per sample; a tiny penalty prefers "no motion" in flat areas.
 float cost(vec2 uv, vec2 off, float lod, float texel, int n, float pen) {
@@ -437,28 +440,28 @@ float cost(vec2 uv, vec2 off, float lod, float texel, int n, float pen) {
 void main(){
   vec2 uv = gl_FragCoord.xy / uGrid;
   float best = 1e9; vec2 bo = vec2(0.0);
-  for (int dy = -8; dy <= 8; dy++) for (int dx = -8; dx <= 8; dx++) {          // stage 1: 4px steps, 4x4 samples
+  for (int dy = -uR.x; dy <= uR.x; dy++) for (int dx = -uR.x; dx <= uR.x; dx++) {          // stage 1: 4px steps, 4x4 samples
     vec2 off = vec2(float(dx), float(dy)) * 4.0;
-    float c = cost(uv, off, 2.0, 4.0, 4, 0.001);
+    float c = cost(uv, off, 2.0, 4.0, uN.x, 0.001);
     if (c < best) { best = c; bo = off; }
   }
   vec2 c1 = bo; best = 1e9;
-  for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++) {          // stage 2: 2px steps, 8x8 samples
+  for (int dy = -uR.y; dy <= uR.y; dy++) for (int dx = -uR.y; dx <= uR.y; dx++) {          // stage 2: 2px steps, 8x8 samples
     vec2 off = c1 + vec2(float(dx), float(dy)) * 2.0;
-    float c = cost(uv, off, 1.0, 2.0, 8, 0.0005);
+    float c = cost(uv, off, 1.0, 2.0, uN.y, 0.0005);
     if (c < best) { best = c; bo = off; }
   }
   vec2 c2 = bo; best = 1e9;
-  for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {          // stage 3: 1px steps, 8 samples 2px apart
+  for (int dy = -uR.z; dy <= uR.z; dy++) for (int dx = -uR.z; dx <= uR.z; dx++) {          // stage 3: 1px steps, 8 samples 2px apart
     vec2 off = c2 + vec2(float(dx), float(dy));
-    float c = cost(uv, off, 0.0, 2.0, 8, 0.0003);
+    float c = cost(uv, off, 0.0, 2.0, uN.z, 0.0003);
     if (c < best) { best = c; bo = off; }
   }
   o = vec4((bo + 128.0) / 255.0, 0.0, 1.0);
 }`;
   const SYN = `#version 300 es
 precision highp float; precision highp sampler2D;
-uniform sampler2D uA, uB, uF; uniform float uT; uniform vec2 uSrc, uOut; out vec4 o;
+uniform sampler2D uA, uB, uF; uniform float uT; uniform vec2 uSrc, uOut; uniform int uRing; out vec4 o;
 vec2 flow(vec2 q){ return (texture(uF, q).rg * 255.0 - 128.0) / uSrc; }
 // how much the two warped frames disagree at q (0 = warp is trustworthy)
 float disagree(vec2 q) {
@@ -473,7 +476,7 @@ void main(){
   vec3 b = texture(uB, q + (1.0 - uT) * d).rgb;
   // Worst disagreement in a ring around this pixel, so bad areas fall back as one solid region, not as confetti.
   float err = disagree(q); vec2 px = 1.0 / uSrc;
-  for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
+  for (int j = -uRing; j <= uRing; j++) for (int i = -uRing; i <= uRing; i++) {
     if (i == 0 && j == 0) continue;
     err = max(err, disagree(q + vec2(float(i), float(j)) * 3.0 * px));
   }
@@ -487,7 +490,7 @@ void main(){
     return p;
   }
   let pFlow, pSyn;
-  try { pFlow = prog(FLOW); pSyn = prog(SYN); } catch (e) { console.error('smooth shaders: ' + e.message); cv.remove(); return null; }
+  try { pFlow = prog(FLOW); pSyn = prog(SYN); } catch (e) { makeSmoother.fail = 'shader error: ' + String(e.message).replace(/\s+/g, ' ').slice(0, 160); console.error('smooth ' + makeSmoother.fail); cv.remove(); return null; }
   const vao = gl.createVertexArray();
   const tex = () => { const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -513,6 +516,7 @@ void main(){
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, flowTex, 0);
     gl.viewport(0, 0, gw, gh);
     bind(pFlow, ['uA', 'uB']);
+    gl.uniform3i(gl.getUniformLocation(pFlow, 'uR'), 8, 2, 1); gl.uniform3i(gl.getUniformLocation(pFlow, 'uN'), 4, 8, 8);
     gl.uniform2f(gl.getUniformLocation(pFlow, 'uSrc'), sw, sh); gl.uniform2f(gl.getUniformLocation(pFlow, 'uGrid'), gw, gh);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texB);
@@ -533,7 +537,7 @@ void main(){
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, cv.width, cv.height);
     bind(pSyn, ['uA', 'uB', 'uF']);
-    gl.uniform1f(gl.getUniformLocation(pSyn, 'uT'), t);
+    gl.uniform1f(gl.getUniformLocation(pSyn, 'uT'), t); gl.uniform1i(gl.getUniformLocation(pSyn, 'uRing'), 2);
     gl.uniform2f(gl.getUniformLocation(pSyn, 'uSrc'), sw, sh); gl.uniform2f(gl.getUniformLocation(pSyn, 'uOut'), cv.width, cv.height);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texB);
@@ -600,7 +604,7 @@ function startSmooth() {
     hidden() { const sr = player && player.shadowRoot, u = sr && sr.querySelector('#unmute-overlay'); return !!(u && u.offsetParent !== null); }
   });
   if (smoother) { smoother.start(); logAdd('smooth', ['on, ' + (fps || '?') + ' fps source']); }
-  else { logAdd('smooth', ['WebGL2 unavailable']); toast('Smooth mode needs WebGL2, which this browser does not offer'); }
+  else { const why = makeSmoother.fail || 'unknown'; logAdd('smooth', ['failed: ' + why]); toast('Smooth mode could not start: ' + why, 7000); }
 }
 
 function destroyPlayer() {
