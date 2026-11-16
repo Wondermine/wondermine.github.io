@@ -204,9 +204,10 @@ body.immersive .bar{display:none}
       <option value="wasd">W A S D</option>
     </select>
   </label>
+  <label>Smooth motion (experimental) <input type="checkbox" id="sSmooth"></label>
   <label>Remember opened files <input type="checkbox" id="sRem"></label>
   <label>Show key debug overlay <input type="checkbox" id="sDbg"></label>
-  <p class="dim">Changing scale mode or quality restarts the game.</p>
+  <p class="dim">Changing scale mode, quality or smooth motion restarts the game. Smooth motion draws in-between frames on top of the game; it adds about one game frame of delay and can show glitches on fast, thin objects.</p>
   <div id="missBox" hidden style="margin-bottom:10px"><p class="dim" id="missHead" style="margin:8px 0 4px"></p><pre id="missList" style="margin:0;max-height:130px;overflow:auto;font-size:11px;white-space:pre-wrap;word-break:break-all;color:#e8b4b4"></pre></div>
   <p class="dim" style="margin:8px 0 4px">Log (last 60 lines)</p>
   <pre id="logBox" style="margin:0 0 10px;max-height:140px;overflow:auto;font-size:10px;white-space:pre-wrap;word-break:break-all;color:#c9d1e6"></pre>
@@ -344,7 +345,7 @@ function logAdd(kind, args) {
 ['error', 'warn'].forEach(k => { const o = console[k].bind(console); console[k] = (...a) => { logAdd(k, a); o(...a); }; });
 window.addEventListener('error', e => logAdd('uncaught', [e.message]));
 window.addEventListener('unhandledrejection', e => logAdd('rejection', [e.reason]));
-const VERSION = '1.7.4';          // bump on every change
+const VERSION = '1.8.0';          // bump on every change
 const BUILD_DATE = '2026-11-16';
 let ruffleVersion = '';
 function showVersion() {
@@ -359,7 +360,7 @@ const coarse = matchMedia('(pointer:coarse)').matches;
 const S = {
   scale: store.get('scale', 'showAll'), quality: store.get('quality', 'high'),
   volume: store.get('volume', 1), muted: false,
-  dpad: store.get('dpad', 'arrows'), remember: store.get('remember', true), pad: store.get('pad', coarse)
+  dpad: store.get('dpad', 'arrows'), smooth: store.get('smooth', false), remember: store.get('remember', true), pad: store.get('pad', coarse)
 };
 
 let player = null;
@@ -404,7 +405,195 @@ function loadRuffle() {
   return ruffleP;
 }
 
+/* ---------- Smooth mode: experimental frame interpolation ----------
+   Watches the Ruffle canvas, and whenever a new game frame appears it estimates per-block motion between the
+   previous and the new frame (GPU block matching), then draws motion-compensated in-between frames on an overlay
+   canvas at the display's refresh rate. The overlay shows the game about one game-frame late (that is what
+   interpolation costs). Returns null when WebGL2 is unavailable. */
+function makeSmoother(getSource, mount, opts) {
+  opts = opts || {};
+  const cv = document.createElement('canvas');
+  cv.style.cssText = opts.css || 'position:fixed;left:0;top:0;pointer-events:none;z-index:3;display:none';
+  mount.appendChild(cv);
+  const gl = cv.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
+  if (!gl) { cv.remove(); return null; }
+
+  const VS = '#version 300 es\nvoid main(){vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));gl_Position=vec4(p*2.0-1.0,0.0,1.0);}';
+  const FLOW = `#version 300 es
+precision highp float; precision highp sampler2D;
+uniform sampler2D uA, uB; uniform vec2 uSrc, uGrid; out vec4 o;
+// Coarse-to-fine block matching for 16x16 px blocks: 4px steps (+-32px), then 2px, then 1px.
+// Costs are average colour difference per sample; a tiny penalty prefers "no motion" in flat areas.
+float cost(vec2 uv, vec2 off, float lod, float texel, int n, float pen) {
+  vec2 px = texel / uSrc; float sad = 0.0; float h = float(n) * 0.5 - 0.5;
+  for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) {
+    vec2 p = uv + (vec2(float(i), float(j)) - h) * px;
+    vec3 d = abs(textureLod(uA, p, lod).rgb - textureLod(uB, p + off / uSrc, lod).rgb);
+    sad += d.r + d.g + d.b;
+  }
+  return sad / float(n * n) + pen * (abs(off.x) + abs(off.y));
+}
+void main(){
+  vec2 uv = gl_FragCoord.xy / uGrid;
+  float best = 1e9; vec2 bo = vec2(0.0);
+  for (int dy = -8; dy <= 8; dy++) for (int dx = -8; dx <= 8; dx++) {          // stage 1: 4px steps, 4x4 samples
+    vec2 off = vec2(float(dx), float(dy)) * 4.0;
+    float c = cost(uv, off, 2.0, 4.0, 4, 0.001);
+    if (c < best) { best = c; bo = off; }
+  }
+  vec2 c1 = bo; best = 1e9;
+  for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++) {          // stage 2: 2px steps, 8x8 samples
+    vec2 off = c1 + vec2(float(dx), float(dy)) * 2.0;
+    float c = cost(uv, off, 1.0, 2.0, 8, 0.0005);
+    if (c < best) { best = c; bo = off; }
+  }
+  vec2 c2 = bo; best = 1e9;
+  for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {          // stage 3: 1px steps, 8 samples 2px apart
+    vec2 off = c2 + vec2(float(dx), float(dy));
+    float c = cost(uv, off, 0.0, 2.0, 8, 0.0003);
+    if (c < best) { best = c; bo = off; }
+  }
+  o = vec4((bo + 128.0) / 255.0, 0.0, 1.0);
+}`;
+  const SYN = `#version 300 es
+precision highp float; precision highp sampler2D;
+uniform sampler2D uA, uB, uF; uniform float uT; uniform vec2 uSrc, uOut; out vec4 o;
+vec2 flow(vec2 q){ return (texture(uF, q).rg * 255.0 - 128.0) / uSrc; }
+void main(){
+  vec2 q = vec2(gl_FragCoord.x / uOut.x, 1.0 - gl_FragCoord.y / uOut.y);
+  vec2 d = flow(q - uT * flow(q));                    // look up the motion where the block was at time t
+  vec3 a = texture(uA, q - uT * d).rgb;
+  vec3 b = texture(uB, q + (1.0 - uT) * d).rgb;
+  float err = dot(abs(a - b), vec3(1.0));
+  vec3 plain = uT < 0.5 ? texture(uA, q).rgb : texture(uB, q).rgb;
+  o = vec4(mix(mix(a, b, uT), plain, smoothstep(0.12, 0.45, err)), 1.0);   // don't trust the warp where it disagrees
+}`;
+  function prog(fs) {
+    const mk = (t, s) => { const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh); if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh)); return sh; };
+    const p = gl.createProgram(); gl.attachShader(p, mk(gl.VERTEX_SHADER, VS)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    return p;
+  }
+  let pFlow, pSyn;
+  try { pFlow = prog(FLOW); pSyn = prog(SYN); } catch (e) { console.error('smooth shaders: ' + e.message); cv.remove(); return null; }
+  const vao = gl.createVertexArray();
+  const tex = () => { const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); return t; };
+  let texA = tex(), texB = tex();
+  const flowTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, flowTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const fbo = gl.createFramebuffer();
+  let sw = 0, sh = 0, gw = 0, gh = 0, haveFrames = 0;
+
+  function upload(t, src) {
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    gl.generateMipmap(gl.TEXTURE_2D);
+  }
+  function bind(p, names) { gl.useProgram(p); names.forEach((n, i) => gl.uniform1i(gl.getUniformLocation(p, n), i)); }
+  function computeFlow() {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.bindTexture(gl.TEXTURE_2D, flowTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gw, gh, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, flowTex, 0);
+    gl.viewport(0, 0, gw, gh);
+    bind(pFlow, ['uA', 'uB']);
+    gl.uniform2f(gl.getUniformLocation(pFlow, 'uSrc'), sw, sh); gl.uniform2f(gl.getUniformLocation(pFlow, 'uGrid'), gw, gh);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texB);
+    gl.bindVertexArray(vao); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+  // A new game frame arrived: shift B -> A, upload the new one as B, estimate motion A -> B.
+  function push(src) {
+    const w = src.width, h = src.height; if (!w || !h) return false;
+    if (w !== sw || h !== sh) { sw = w; sh = h; gw = Math.max(1, Math.ceil(w / 16)); gh = Math.max(1, Math.ceil(h / 16)); haveFrames = 0; }
+    const t = texA; texA = texB; texB = t;
+    upload(texB, src);
+    if (!haveFrames) { upload(texA, src); haveFrames = 1; } else haveFrames = 2;
+    computeFlow();
+    return true;
+  }
+  function draw(t) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, cv.width, cv.height);
+    bind(pSyn, ['uA', 'uB', 'uF']);
+    gl.uniform1f(gl.getUniformLocation(pSyn, 'uT'), t);
+    gl.uniform2f(gl.getUniformLocation(pSyn, 'uSrc'), sw, sh); gl.uniform2f(gl.getUniformLocation(pSyn, 'uOut'), cv.width, cv.height);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texB);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, flowTex);
+    gl.bindVertexArray(vao); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  /* ----- live loop ----- */
+  const tiny = document.createElement('canvas'); tiny.width = 16; tiny.height = 12;
+  const tctx = tiny.getContext('2d', { willReadFrequently: true });
+  let raf = 0, prevSig = null, lastNew = 0, ivl = opts.interval || 50, tStart = 0, running = false;
+  function sig(src) { tctx.drawImage(src, 0, 0, 16, 12); return tctx.getImageData(0, 0, 16, 12).data; }
+  function place(src) {
+    const r = src.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const s = cv.style; s.left = r.left + 'px'; s.top = r.top + 'px'; s.width = r.width + 'px'; s.height = r.height + 'px';
+  }
+  function loop(now) {
+    if (!running) return;
+    raf = requestAnimationFrame(loop);
+    const src = getSource();
+    if (!src || !src.width || !src.height || (opts.hidden && opts.hidden())) { cv.style.display = 'none'; return; }
+    place(src);
+    let s; try { s = sig(src); } catch (_) { return; }
+    let changed = !prevSig;
+    if (prevSig) for (let i = 0; i < s.length; i += 4) if (s[i] !== prevSig[i] || s[i + 1] !== prevSig[i + 1] || s[i + 2] !== prevSig[i + 2]) { changed = true; break; }
+    prevSig = s;
+    if (changed) {
+      if (push(src)) {
+        if (lastNew) ivl = Math.min(120, Math.max(25, ivl * 0.7 + (now - lastNew) * 0.3));
+        lastNew = now; tStart = now;
+      }
+    }
+    if (haveFrames < 1) return;
+    cv.style.display = 'block';
+    draw(haveFrames < 2 ? 1 : Math.min(1, (now - tStart) / ivl));
+  }
+  return {
+    canvas: cv,
+    start() { if (running) return; running = true; raf = requestAnimationFrame(loop); },
+    stop() { running = false; cancelAnimationFrame(raf); cv.remove(); },
+  };
+}
+
+
+/* Smooth mode glue. Ruffle's WebGL canvas clears itself after each frame, so while Smooth is on every WebGL context
+   is created with preserveDrawingBuffer so the overlay can read the last frame. Takes effect on the next (re)start. */
+(function () {
+  const orig = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+    if (S.smooth && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) attrs = Object.assign({}, attrs, { preserveDrawingBuffer: true });
+    return orig.call(this, type, attrs);
+  };
+})();
+let smoother = null;
+function srcCanvas() { const sr = player && player.shadowRoot; return sr && sr.querySelector('canvas'); }
+function stopSmooth() { if (smoother) { try { smoother.stop(); } catch (_) {} smoother = null; } }
+function startSmooth() {
+  stopSmooth();
+  if (!S.smooth || !player) return;
+  let fps = 0; try { fps = +(player.metadata && player.metadata.frameRate) || 0; } catch (_) {}
+  smoother = makeSmoother(srcCanvas, document.body, {
+    interval: fps > 0 ? 1000 / fps : 50,
+    hidden() { const sr = player && player.shadowRoot, u = sr && sr.querySelector('#unmute-overlay'); return !!(u && u.offsetParent !== null); }
+  });
+  if (smoother) { smoother.start(); logAdd('smooth', ['on, ' + (fps || '?') + ' fps source']); }
+  else { logAdd('smooth', ['WebGL2 unavailable']); toast('Smooth mode needs WebGL2, which this browser does not offer'); }
+}
+
 function destroyPlayer() {
+  stopSmooth();
   releaseAll();
   if (player) { try { player.remove(); } catch (_) {} player = null; }
   blobUrls.forEach(u => URL.revokeObjectURL(u)); blobUrls = [];
@@ -453,6 +642,7 @@ async function startPlayer() {
       }
     }
     applyVolume();
+    setTimeout(startSmooth, 600);
     try { sessionStorage.removeItem('swfp.opening'); } catch (_) {}
     $('empty').hidden = true;
     $('title').textContent = current.name;
@@ -856,7 +1046,7 @@ $('fExit').onclick = () => toggleImmersive(false);
 /* settings */
 $('bSet').onclick = () => {
   $('sVol').value = S.volume; $('sScale').value = S.scale; $('sQual').value = S.quality;
-  $('sDpad').value = S.dpad; $('sRem').checked = S.remember; $('sDbg').checked = dbg.on;
+  $('sDpad').value = S.dpad; $('sRem').checked = S.remember; $('sDbg').checked = dbg.on; $('sSmooth').checked = S.smooth;
   $('sSwitch').hidden = !(bundle && bundle.swfs.length > 1 && current && (current.url || current.base || '').includes('/vfs/' + bundle.id + '/'));
   updateMissing();
   $('logBox').textContent = logLines.join('\n') || '(empty)';
@@ -872,6 +1062,7 @@ $('sSwitch').onclick = run(async () => {
 $('sDone').onclick = closeSheets;
 $('sVol').oninput = e => { S.volume = +e.target.value; S.muted = false; store.set('volume', S.volume); applyVolume(); };
 $('sDpad').onchange = e => { releaseAll(); S.dpad = e.target.value; store.set('dpad', S.dpad); };
+$('sSmooth').onchange = e => { S.smooth = e.target.checked; store.set('smooth', S.smooth); if (current) run(startPlayer)(); else stopSmooth(); };
 $('sDbg').onchange = e => { dbg.on = e.target.checked; store.set('dbg', dbg.on); };
 $('sRem').onchange = e => { S.remember = e.target.checked; store.set('remember', S.remember); };
 $('sScale').onchange = e => { S.scale = e.target.value; store.set('scale', S.scale); if (current) run(startPlayer)(); };
