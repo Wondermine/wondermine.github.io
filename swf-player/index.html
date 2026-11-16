@@ -207,7 +207,7 @@ body.immersive .bar{display:none}
   <label>Smooth motion (experimental) <input type="checkbox" id="sSmooth"></label>
   <label>Remember opened files <input type="checkbox" id="sRem"></label>
   <label>Show key debug overlay <input type="checkbox" id="sDbg"></label>
-  <p class="dim">Changing scale mode, quality or smooth motion restarts the game. Smooth motion draws in-between frames on top of the game; it adds about one game frame of delay and can show glitches on fast, thin objects.</p>
+  <p class="dim">Changing scale mode or quality restarts the game. Smooth motion applies the next time you open a game; it draws in-between frames on top of the game; it adds about one game frame of delay and can show glitches on fast, thin objects.</p>
   <div id="missBox" hidden style="margin-bottom:10px"><p class="dim" id="missHead" style="margin:8px 0 4px"></p><pre id="missList" style="margin:0;max-height:130px;overflow:auto;font-size:11px;white-space:pre-wrap;word-break:break-all;color:#e8b4b4"></pre></div>
   <p class="dim" style="margin:8px 0 4px">Log (last 60 lines)</p>
   <pre id="logBox" style="margin:0 0 10px;max-height:140px;overflow:auto;font-size:10px;white-space:pre-wrap;word-break:break-all;color:#c9d1e6"></pre>
@@ -345,7 +345,7 @@ function logAdd(kind, args) {
 ['error', 'warn'].forEach(k => { const o = console[k].bind(console); console[k] = (...a) => { logAdd(k, a); o(...a); }; });
 window.addEventListener('error', e => logAdd('uncaught', [e.message]));
 window.addEventListener('unhandledrejection', e => logAdd('rejection', [e.reason]));
-const VERSION = '1.8.2';          // bump on every change
+const VERSION = '1.8.3';          // bump on every change
 const BUILD_DATE = '2026-11-16';
 let ruffleVersion = '';
 function showVersion() {
@@ -592,12 +592,12 @@ void main(){
     return orig.call(this, type, attrs);
   };
 })();
-let smoother = null;
+let smoother = null, smoothAtStart = false;   // smoothAtStart: the current player was created with Smooth on (its canvas is readable)
 function srcCanvas() { const sr = player && player.shadowRoot; return sr && sr.querySelector('canvas'); }
 function stopSmooth() { if (smoother) { try { smoother.stop(); } catch (_) {} smoother = null; } }
 function startSmooth() {
   stopSmooth();
-  if (!S.smooth || !player) return;
+  if (!S.smooth || !smoothAtStart || !player) return;
   let fps = 0; try { fps = +(player.metadata && player.metadata.frameRate) || 0; } catch (_) {}
   smoother = makeSmoother(srcCanvas, document.body, {
     interval: fps > 0 ? 1000 / fps : 50,
@@ -636,6 +636,7 @@ async function startPlayer() {
     const ruffle = await loadRuffle();
     if (!ruffleVersion && ruffle.version) { ruffleVersion = String(ruffle.version); showVersion(); }
     destroyPlayer();
+    smoothAtStart = S.smooth;
     const p = ruffle.createPlayer();
     $('host').appendChild(p);
     watchFocus(p);
@@ -1077,7 +1078,11 @@ $('sSwitch').onclick = run(async () => {
 $('sDone').onclick = closeSheets;
 $('sVol').oninput = e => { S.volume = +e.target.value; S.muted = false; store.set('volume', S.volume); applyVolume(); };
 $('sDpad').onchange = e => { releaseAll(); S.dpad = e.target.value; store.set('dpad', S.dpad); };
-$('sSmooth').onchange = e => { S.smooth = e.target.checked; store.set('smooth', S.smooth); if (current) run(startPlayer)(); else stopSmooth(); };
+$('sSmooth').onchange = e => {
+  S.smooth = e.target.checked; store.set('smooth', S.smooth);
+  if (!S.smooth) stopSmooth();
+  else if (current) toast('Smooth motion starts the next time you open a game', 4500);   // no live restart: a second Ruffle instance next to the old one can run the phone out of GPU memory
+};
 $('sDbg').onchange = e => { dbg.on = e.target.checked; store.set('dbg', dbg.on); };
 $('sRem').onchange = e => { S.remember = e.target.checked; store.set('remember', S.remember); };
 $('sScale').onchange = e => { S.scale = e.target.value; store.set('scale', S.scale); if (current) run(startPlayer)(); };
