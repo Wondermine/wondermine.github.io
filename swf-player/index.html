@@ -32,7 +32,7 @@ button{background:none;border:0;cursor:pointer}
 
 .stage{position:relative;flex:1;min-height:0;background:#000}
 #host{position:absolute;inset:0;touch-action:none}
-#host ruffle-player{display:block;width:100%;height:100%}
+#host ruffle-player{display:block;width:100%;height:100%;outline:none}
 
 .empty{position:absolute;inset:0;overflow:auto;-webkit-overflow-scrolling:touch;padding:28px 20px calc(28px + env(safe-area-inset-bottom));background:var(--bg);text-align:center}
 .empty h1{margin:8px 0 4px;font-size:26px}
@@ -67,7 +67,7 @@ body.immersive .bar{display:none}
 .dpad.hu .u,.dpad.hd .d,.dpad.hl .l,.dpad.hr .r{color:var(--acc)}
 .mid{display:grid;grid-template-columns:repeat(2,auto);gap:8px}
 .tray{display:none;flex:1;flex-wrap:wrap;gap:5px;justify-content:center;touch-action:none}
-.tray .k{width:34px;height:34px;padding:0;border-radius:8px;font-size:12px;font-weight:500}
+.tray .k{width:32px;height:32px;padding:0;border-radius:8px;font-size:12px;font-weight:500}
 .pad.more .dpad,.pad.more .mid,.pad.more .acts{display:none}
 .pad.more .tray{display:flex}
 .acts{display:grid;grid-template-columns:repeat(3,56px);gap:8px;touch-action:none}
@@ -324,7 +324,7 @@ const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
 
 /* ================= app ================= */
 const $ = id => document.getElementById(id);
-const VERSION = '1.5.0';          // bump on every change
+const VERSION = '1.6.0';          // bump on every change
 const BUILD_DATE = '2026-11-16';
 let ruffleVersion = '';
 function showVersion() {
@@ -492,14 +492,14 @@ const missing = new Set();
 function updateMissing() {
   const n = missing.size;
   $('missBox').hidden = !n;
-  $('missHead').textContent = n + ' file' + (n === 1 ? '' : 's') + ' the game asked for but could not find:';
+  $('missHead').textContent = n + ' file' + (n === 1 ? '' : 's') + ' the game asked for but could not load:';
   $('missList').textContent = Array.from(missing).slice(0, 60).join('\n') + (n > 60 ? '\n…' : '');
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => {
   const d = e.data;
   if (!d || d.type !== 'miss' || missing.has(d.path)) return;
   missing.add(d.path); updateMissing();
-  if (missing.size <= 2 || missing.size % 25 === 0) toast('Missing file: ' + d.path + (missing.size > 1 ? ' (' + missing.size + ' so far)' : '') + '. Open the whole game folder as a ZIP.', 7000);
+  if (missing.size <= 2 || missing.size % 25 === 0) toast((/^https?:/.test(d.path) ? 'Remote file failed: ' : 'Missing file: ') + d.path + (missing.size > 1 ? ' (' + missing.size + ' so far)' : '') + (/^https?:/.test(d.path) ? '' : '. Open the whole game folder as a ZIP.'), 7000);
 });
 
 async function openBundle(entries, label) {
@@ -626,12 +626,22 @@ const KEYS = {};
 const addKey = (code, key, kc, loc) => { KEYS[code] = { key, kc, loc: loc || 0 }; };
 [['ArrowUp', 38], ['ArrowDown', 40], ['ArrowLeft', 37], ['ArrowRight', 39], ['Space', 32, ' '], ['Enter', 13], ['Escape', 27], ['Tab', 9], ['Backspace', 8]]
   .forEach(([c, kc, k]) => addKey(c, k || c, kc));
+[['Comma', 188, ','], ['Period', 190, '.'], ['Slash', 191, '/'], ['Semicolon', 186, ';'], ['Quote', 222, "'"], ['BracketLeft', 219, '['],
+ ['BracketRight', 221, ']'], ['Minus', 189, '-'], ['Equal', 187, '='], ['Backslash', 220, '\\'], ['Backquote', 192, '`'], ['Delete', 46]]
+  .forEach(([c, kc, k]) => addKey(c, k || c, kc));
 addKey('ShiftLeft', 'Shift', 16, 1); addKey('ControlLeft', 'Control', 17, 1); addKey('AltLeft', 'Alt', 18, 1);
 for (let i = 0; i < 26; i++) addKey('Key' + String.fromCharCode(65 + i), String.fromCharCode(97 + i), 65 + i);
 for (let i = 0; i < 10; i++) addKey('Digit' + i, String(i), 48 + i);
 for (let i = 1; i <= 12; i++) addKey('F' + i, 'F' + i, 111 + i);
+// Dispatch from the innermost element (Ruffle's canvas). The event is composed, so it still bubbles out of the
+// shadow root to the player element, document and window: listeners at any of those levels receive it once.
+function keyTarget() {
+  if (!player) return null;
+  const sr = player.shadowRoot;
+  return (sr && sr.querySelector('canvas')) || player;
+}
 const held = new Set();
-const dbg = { sent: 0, seen: 0, last: '-', on: store.get('dbg', false) };
+const dbg = { sent: 0, seen: 0, last: '-', tgt: '-', on: store.get('dbg', false) };
 window.addEventListener('keydown', () => { dbg.seen++; }, true);
 function keyEvent(type, code, repeat) {
   const k = KEYS[code];
@@ -643,7 +653,7 @@ const rep = new Map();
 function startRepeat(code) {
   stopRepeat(code);
   const r = {};
-  r.t = setTimeout(() => { r.iv = setInterval(() => { if (player) player.dispatchEvent(keyEvent('keydown', code, true)); }, 33); }, 420);
+  r.t = setTimeout(() => { r.iv = setInterval(() => { const t = keyTarget(); if (t) t.dispatchEvent(keyEvent('keydown', code, true)); }, 33); }, 420);
   rep.set(code, r);
 }
 function stopRepeat(code) {
@@ -661,9 +671,12 @@ function watchFocus(p) {
 function ensureFocus() {
   if (playerFocused || !player) return;
   try {
-    const inner = player.shadowRoot && player.shadowRoot.activeElement;
+    if (!player.hasAttribute('tabindex')) player.setAttribute('tabindex', '0');
+    const sr = player.shadowRoot;
+    const inner = sr && sr.activeElement;
     if (inner) inner.blur();                      // force a clean focusout -> focusin
-    player.focus({ preventScroll: true });
+    const c = sr && sr.querySelector('canvas');
+    (c && c.tabIndex >= 0 ? c : player).focus({ preventScroll: true });
   } catch (_) {}
 }
 function keyDown(code) {
@@ -671,14 +684,15 @@ function keyDown(code) {
   held.add(code);
   ensureFocus();
   dbg.sent++; dbg.last = 'down ' + code;
-  player.dispatchEvent(keyEvent('keydown', code));
+  const t = keyTarget(); dbg.tgt = t === player ? 'player' : t.tagName.toLowerCase();
+  t.dispatchEvent(keyEvent('keydown', code));
   startRepeat(code);
 }
 function keyUp(code) {
   if (!held.delete(code)) return;
   stopRepeat(code);
   dbg.last = 'up ' + code;
-  if (player) player.dispatchEvent(keyEvent('keyup', code));
+  const t = keyTarget(); if (t) t.dispatchEvent(keyEvent('keyup', code));
 }
 function releaseAll() { Array.from(held).forEach(keyUp); document.querySelectorAll('.k.on').forEach(b => b.classList.remove('on')); $('dpad').className = 'dpad'; }
 
@@ -751,7 +765,9 @@ document.querySelectorAll('.k[data-key]').forEach(b => {
   for (let i = 1; i <= 9; i++) mk(String(i), 'Digit' + i); mk('0', 'Digit0');
   for (let i = 1; i <= 12; i++) mk('F' + i, 'F' + i);
   for (let i = 0; i < 26; i++) mk(String.fromCharCode(65 + i), 'Key' + String.fromCharCode(65 + i));
-  mk('Tab', 'Tab'); mk('Bksp', 'Backspace'); mk('Alt', 'AltLeft');
+  mk('Tab', 'Tab'); mk('Bksp', 'Backspace'); mk('Alt', 'AltLeft'); mk('Del', 'Delete');
+  [[',', 'Comma'], ['.', 'Period'], ['/', 'Slash'], [';', 'Semicolon'], ["'", 'Quote'], ['[', 'BracketLeft'], [']', 'BracketRight'],
+   ['-', 'Minus'], ['=', 'Equal'], ['\\', 'Backslash'], ['`', 'Backquote']].forEach(([l, c]) => mk(l, c));
   tray.querySelectorAll('.k').forEach(b => { if (b.textContent.length > 2 && b.textContent !== 'Back') b.style.width = '46px'; });
   bindControl($('kMore'), { down: () => { $('pad').classList.add('more'); }, up: () => {} });
 })();
@@ -772,7 +788,7 @@ setInterval(syncPlayBtn, 400);
 setInterval(() => {
   const d = $('dbg'); d.hidden = !dbg.on; if (!dbg.on) return;
   d.textContent = 'keys sent: ' + dbg.sent + '  last: ' + dbg.last + '\nkeydowns seen by page: ' + dbg.seen +
-    '\nmissing files: ' + missing.size + '\nplayer focused: ' + playerFocused + '  held: ' + Array.from(held).join(',');
+    '  target: ' + dbg.tgt + '\nmissing files: ' + missing.size + '\nplayer focused: ' + playerFocused + '  held: ' + Array.from(held).join(',');
 }, 200);
 
 function toggleImmersive(force) {
