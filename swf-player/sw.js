@@ -30,5 +30,17 @@ async function serve(url) {
       }
     }
   }
+  if (!res) {
+    // Last resort: same file name anywhere in this bundle (flat picks, odd folder layouts).
+    const m = url.pathname.match(/^(.*\/vfs\/[^/]+\/)/);
+    const name = safeDecode(url.pathname).toLowerCase().split('/').pop();
+    if (m) {
+      const prefix = safeDecode(m[1]).toLowerCase();
+      for (const req of await cache.keys()) {
+        const p = safeDecode(new URL(req.url).pathname).toLowerCase();
+        if (p.startsWith(prefix) && p.split('/').pop() === name) { res = await cache.match(req); break; }
+      }
+    }
+  }
   return res || new Response('Not found', { status: 404 });
 }

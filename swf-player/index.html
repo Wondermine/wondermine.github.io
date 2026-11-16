@@ -14,7 +14,10 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 *{touch-action:manipulation}
 html,body{-webkit-text-size-adjust:100%;margin:0;height:100%;background:var(--bg);color:var(--fg);font:15px/1.4 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;overscroll-behavior:none}
-body{position:fixed;inset:0;display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+body{position:fixed;inset:0;display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);-webkit-touch-callout:none}
+/* Never put user-select:none on <body>: Safari then refuses typing into Ruffle's hidden text input. */
+.bar,.pad,.sheet,#fab,.empty,.k{-webkit-user-select:none;user-select:none}
+#host,#host ruffle-player{-webkit-user-select:text;user-select:text}
 button,select,input{font:inherit;color:inherit}
 button{background:none;border:0;cursor:pointer}
 [hidden]{display:none!important}
@@ -128,7 +131,7 @@ body.immersive .bar{display:none}
     <h1>SWF Player</h1>
     <p>Play Flash games right in the browser, powered by Ruffle. Works on iPhone and iPad.</p>
     <button class="big" id="bOpen">Open a file</button>
-    <p>.swf (including compressed), .zip bundles with assets, or projector .exe</p>
+    <p>.swf (including compressed), .zip bundles with assets, or projector .exe.<br>Game needs extra files? Pick the .swf <b>and</b> its files together, or zip the folder first.</p>
     <form id="urlForm">
       <input id="urlIn" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="…or paste a URL (needs CORS)">
       <button type="submit">Go</button>
@@ -190,6 +193,7 @@ body.immersive .bar{display:none}
   </label>
   <label>Remember opened files <input type="checkbox" id="sRem"></label>
   <p class="dim">Changing scale mode or quality restarts the game.</p>
+  <button class="ghost" id="sSwitch" style="height:42px;margin-bottom:8px" hidden>Run a different SWF from this bundle</button>
   <button class="ghost" id="sClear" style="height:42px">Clear saved files</button>
   <button class="big" id="sDone">Done</button>
 </div>
@@ -457,11 +461,14 @@ async function swReady() {
   } catch (_) { return null; }
 }
 
-async function openZip(name, bytes) {
-  if (typeof DecompressionStream === 'undefined') throw new Error('ZIP support needs iOS / Safari 16.4 or newer.');
-  const list = cleanZipEntries(readZipDirectory(bytes));
-  const swfs = list.filter(e => /\.swf$/i.test(e.path));
-  if (!swfs.length) throw new Error('No .swf file found inside that ZIP.');
+// A "bundle" is a virtual folder (from a ZIP or several picked files) served by the service worker,
+// so a game's relative loads (other SWFs, xml, images, sounds) resolve like they would on a web server.
+let bundle = null; // { swfs: [paths], id, base }
+const bundleUrl = p => new URL('vfs/' + bundle.id + '/' + encodePath(p), bundle.base).href;
+
+async function openBundle(entries, label) {
+  const swfs = entries.filter(e => /\.swf$/i.test(e.path));
+  if (!swfs.length) throw new Error('No .swf file found in ' + label + '.');
   let main = pickMainSwf(swfs);
   if (!main) {
     unbusy();
@@ -473,23 +480,39 @@ async function openZip(name, bytes) {
   const reg = await swReady();
   if (!reg) {
     // No service worker (private mode / file://): play the main SWF alone.
-    const data = await extractZipEntry(bytes, main);
-    current = { kind: 'data', name: main.path, bytes: data };
-    if (list.length > 1) toast('Service worker unavailable, so the bundle’s extra files can’t load.', 5000);
+    bundle = null;
+    current = { kind: 'data', name: main.path, bytes: await main.load() };
+    if (entries.length > 1) toast('Service worker unavailable, so the extra files can’t load.', 5000);
     return startPlayer();
   }
   await caches.delete('swf-vfs');
   const cache = await caches.open('swf-vfs');
   const id = Date.now().toString(36);
   let i = 0;
-  for (const e of list) {
-    busy('Unpacking ' + (++i) + ' / ' + list.length + '…');
-    const data = await extractZipEntry(bytes, e);
+  for (const e of entries) {
+    busy('Unpacking ' + (++i) + ' / ' + entries.length + '…');
+    const data = await e.load();
     const url = new URL('vfs/' + id + '/' + encodePath(e.path), reg.scope).href;
     await cache.put(url, new Response(data, { headers: { 'Content-Type': mimeOf(e.path), 'Content-Length': String(data.length) } }));
   }
-  current = { kind: 'url', name: main.path, url: new URL('vfs/' + id + '/' + encodePath(main.path), reg.scope).href };
+  bundle = { swfs: swfs.map(e => e.path), id, base: reg.scope };
+  current = { kind: 'url', name: main.path, url: bundleUrl(main.path) };
   return startPlayer();
+}
+
+async function openZip(name, bytes) {
+  if (typeof DecompressionStream === 'undefined') throw new Error('ZIP support needs iOS / Safari 16.4 or newer.');
+  const entries = cleanZipEntries(readZipDirectory(bytes)).map(e => ({ path: e.path, load: () => extractZipEntry(bytes, e) }));
+  return openBundle(entries, 'that ZIP');
+}
+
+// Several files picked at once (a SWF plus the assets it loads).
+async function openFiles(files) {
+  if (files.length === 1) return openFile(files[0]);
+  const entries = files.map(f => ({ path: f.name, load: async () => new Uint8Array(await f.arrayBuffer()) }));
+  if (!entries.some(e => /\.swf$/i.test(e.path))) throw new Error('Pick at least one .swf along with the files it needs.');
+  busy('Reading…');
+  return openBundle(entries, 'those files');
 }
 
 async function openUrl(raw) {
@@ -571,18 +594,33 @@ const KEYDEF = [
 ];
 const KEYS = {}; KEYDEF.forEach(([code, key, kc]) => { KEYS[code] = { key, kc }; });
 const held = new Set();
-function keyEvent(type, code) {
+function keyEvent(type, code, repeat) {
   const k = KEYS[code];
-  return new KeyboardEvent(type, { key: k.key, code, keyCode: k.kc, which: k.kc, bubbles: true, cancelable: true, composed: true });
+  return new KeyboardEvent(type, { key: k.key, code, keyCode: k.kc, which: k.kc, repeat: !!repeat, bubbles: true, cancelable: true, composed: true });
+}
+// A real keyboard auto-repeats a held key. Many Flash games move the character from a KEY_DOWN
+// handler (not by polling), so they only move while repeats keep arriving. Emulate that.
+const rep = new Map();
+function startRepeat(code) {
+  stopRepeat(code);
+  const r = {};
+  r.t = setTimeout(() => { r.iv = setInterval(() => { if (player) player.dispatchEvent(keyEvent('keydown', code, true)); }, 33); }, 420);
+  rep.set(code, r);
+}
+function stopRepeat(code) {
+  const r = rep.get(code);
+  if (r) { clearTimeout(r.t); clearInterval(r.iv); rep.delete(code); }
 }
 function keyDown(code) {
   if (!player || held.has(code)) return;
   held.add(code);
   if (document.activeElement !== player) { try { player.focus({ preventScroll: true }); } catch (_) {} }
   player.dispatchEvent(keyEvent('keydown', code));
+  startRepeat(code);
 }
 function keyUp(code) {
   if (!held.delete(code)) return;
+  stopRepeat(code);
   if (player) player.dispatchEvent(keyEvent('keyup', code));
 }
 function releaseAll() { Array.from(held).forEach(keyUp); document.querySelectorAll('.k.on').forEach(b => b.classList.remove('on')); $('dpad').className = 'dpad'; }
@@ -655,8 +693,16 @@ $('fExit').onclick = () => toggleImmersive(false);
 $('bSet').onclick = () => {
   $('sVol').value = S.volume; $('sScale').value = S.scale; $('sQual').value = S.quality;
   $('sDpad').value = S.dpad; $('sRem').checked = S.remember;
+  $('sSwitch').hidden = !(bundle && bundle.swfs.length > 1 && current && current.url && current.url.includes('/vfs/' + bundle.id + '/'));
   showSheet('setSheet');
 };
+$('sSwitch').onclick = run(async () => {
+  closeSheets();
+  const p = await pick(bundle.swfs);
+  if (!p) return;
+  current = { kind: 'url', name: p, url: bundleUrl(p) };
+  await startPlayer();
+});
 $('sDone').onclick = closeSheets;
 $('sVol').oninput = e => { S.volume = +e.target.value; S.muted = false; store.set('volume', S.volume); applyVolume(); };
 $('sDpad').onchange = e => { releaseAll(); S.dpad = e.target.value; store.set('dpad', S.dpad); };
@@ -668,10 +714,11 @@ $('sClear').onclick = () => DB.clear().then(() => { refreshRecent(); toast('Save
 /* open */
 const fileIn = $('file');
 $('bOpen').onclick = () => fileIn.click();
-fileIn.onchange = run(async () => { const f = fileIn.files[0]; fileIn.value = ''; await openFile(f); });
+fileIn.multiple = true;
+fileIn.onchange = run(async () => { const fs = Array.from(fileIn.files); fileIn.value = ''; if (fs.length) await openFiles(fs); });
 $('urlForm').onsubmit = e => { e.preventDefault(); const v = $('urlIn').value.trim(); if (v) run(() => openUrl(v))(); };
 document.addEventListener('dragover', e => e.preventDefault());
-document.addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer && e.dataTransfer.files[0]; if (f) run(() => openFile(f))(); });
+document.addEventListener('drop', e => { e.preventDefault(); const fs = e.dataTransfer ? Array.from(e.dataTransfer.files) : []; if (fs.length) run(() => openFiles(fs))(); });
 
 /* iOS: kill pinch / page scroll while playing */
 ['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
