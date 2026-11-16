@@ -91,10 +91,10 @@ async function foreign(req, url, e) {
   const label = url.origin === location.origin ? safeDecode(url.pathname) : url.href;
   try {
     const res = await fetch(req);
-    if (res.type !== 'opaque' && !res.ok) report(e, label);
+    if (res.type !== 'opaque' && !res.ok) report(e, label + '  [HTTP ' + res.status + ']');
     return res;
   } catch (_) {
-    report(e, label);
+    report(e, label + '  [blocked: CORS or network]');
     return Response.error();
   }
 }
